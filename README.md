@@ -263,6 +263,31 @@ Time spent: 72% 2416x select (5 sec), 22% 2x read_verilog (1 sec), ...
 Area in kGE =  27.04
 ```
 
+## AI improvements
+
+The following improvements were made to the core with AI assistance (Claude Sonnet 4.6):
+
+### Load-use stall & timing optimizations
+
+- **Load-use hazard detection** (`rtl/execute.sv`): added a 1-cycle stall when a load result is consumed by the immediately following instruction, eliminating the combinational AXI-rdata → ALU → AXI-address path that caused a timing violation at 300 MHz on NanGate 45nm.
+- **ALU forwarding mux** (`rtl/execute.sv`): merged a two-level mux (case + override) into a single priority-if/case, reducing the critical-path mux depth.
+- **Word-load early return** (`rtl/wb.sv`): word loads (`RV_LSU_W`) bypass the barrel-shifter entirely since `addr[1:0]` is always zero, removing the shift-mux tree from the load-use forwarding path.
+- **False-path STA constraint** (`synth/nox.nangate.sdc`): the AXI read-data → AXI write-address combinational path is a false path because `load_use_hazard` inserts a bubble before any dependent store can issue.
+- **Register file write-through priority fix** (`rtl/rtl/register_file.sv`): write-through now correctly overrides the hold path during load-use stalls instead of the reverse.
+- **Fetch deadlock fix** (`rtl/fetch.sv`): `data_ready` is asserted even when the L0 FIFO is full during a jump, preventing the fetch FSM from getting permanently stuck in `F_CLR`.
+- **Decode write-through address fix** (`rtl/decode.sv`): during a load-use stall, the register file read addresses now use `id_ex_ff.rs1_addr`/`rs2_addr` (the stalled instruction's registers) instead of the next instruction's registers, ensuring the loaded value reaches the correct operand.
+
+### Bimodal branch predictor
+
+Added a speculative branch predictor to reduce branch penalty:
+
+- **`rtl/branch_predictor.sv`** (new): 16-entry direct-mapped BTB (Branch Target Buffer) and 64-entry bimodal BHT (Branch History Table) with 2-bit saturating counters. The BTB is indexed by `PC[5:2]` and the BHT by `PC[7:2]`.
+- **Speculative fetch redirect** (`rtl/fetch.sv`): when the BTB hits and the BHT predicts taken, the fetch stage redirects `next_pc_addr` to the predicted target without waiting for execute to confirm. The OT and L0 FIFOs were extended to carry a `bp_taken` tag alongside each instruction.
+- **Correct-prediction suppression** (`rtl/execute.sv`): when execute confirms that a JAL or taken branch was correctly predicted, it suppresses `fetch_req_o` (avoiding a redundant pipeline flush) and fires a dedicated `decode_pc_update_o` pulse to fix up the decode stage's `pc_dec` without flushing the pipeline.
+- **`pc_dec` tracking fix** (`rtl/decode.sv`): a new `decode_pc_update_i` input from execute corrects `pc_dec` for instructions that follow a correctly-predicted jump or branch, ensuring that `mepc` and AUIPC/JAL link-address computations carry the right PC value.
+- **`jump_or_branch` guard relaxation** (`rtl/execute.sv`): introduced `no_jump_guard` so that a branch or jump in the cycle immediately after a correctly-predicted jump is not incorrectly suppressed.
+- **Mispredicted not-taken branch suppression** (`rtl/execute.sv`): extended the `we_rd = 0` squash logic to cover the case where a branch was predicted taken but resolved not-taken, preventing wrong-path instructions from corrupting the register file.
+
 ## <a name="lic"></a> License
 
 NoX is licensed under the permissive MIT license. Please refer to the [LICENSE](LICENSE) file for details.
