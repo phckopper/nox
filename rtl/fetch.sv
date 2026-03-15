@@ -104,9 +104,9 @@ module fetch
         end
 
         if ((req_ff && addr_ready) || ~req_ff) begin
-          // Next txn
+          // Next txn — also gate if FIFO is about to fill while decode stalls
           if (next_ot < (buffer_t'(L0_BUFFER_SIZE))) begin
-            valid_addr  = ~full_fifo;
+            valid_addr  = ~full_fifo && ~(write_instr && (buffer_space == buffer_t'(L0_BUFFER_SIZE-1)) && ~get_next_instr);
           end
         end
 
@@ -151,7 +151,7 @@ module fetch
 
   always_comb begin : rd_chn
     write_instr = 'b0;
-    data_ready = (st_ff == F_REQ) ? ~full_fifo : 'b1;
+    data_ready = (st_ff == F_REQ) ? (~full_fifo || fetch_req_i) : 'b1;
     instr_cb_mosi_o.rd_ready = data_ready;
     read_ot_fifo = ot_empty ? 1'b0 : (data_valid && data_ready);
     // Only write in the FIFO if

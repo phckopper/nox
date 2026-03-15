@@ -34,10 +34,10 @@ set lr_synth_rst_input arst
 # clock period in ps, this gives a 250 MHz clock.  using the nangate45 library
 # Ibex can happily meet this on all paths with the lr_synth_abc_clk_uprate
 # setting below. With a lower uprate timing may not be met.
-set lr_synth_clk_period 4000.0
+set lr_synth_clk_period 3000.0
 
 # Amount to subtract from clk period to give the clock period passed to ABC in
 # the synth flow. ABC maps the design to the standard cell library and
 # optimises paths for timing, better results are obtained by giving it a faster
 # clock period so it optimises more.
-set lr_synth_abc_clk_uprate 2000.0
+set lr_synth_abc_clk_uprate 1500.0

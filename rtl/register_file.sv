@@ -37,14 +37,14 @@ module register_file
       next_rs2 = reg_file_ff[rs2_addr_i];
     end
 
-    if (we_i && (rd_addr_i != raddr_t'('d0))) begin
-      next_rs1 = (rs1_addr_i == rd_addr_i) ? rd_data_i : next_rs1;
-      next_rs2 = (rs2_addr_i == rd_addr_i) ? rd_data_i : next_rs2;
-    end
-
     if (~re_i) begin
       next_rs1 = rs1_ff;
       next_rs2 = rs2_ff;
+    end
+
+    if (we_i && (rd_addr_i != raddr_t'('d0))) begin
+      next_rs1 = (rs1_addr_i == rd_addr_i) ? rd_data_i : next_rs1;
+      next_rs2 = (rs2_addr_i == rd_addr_i) ? rd_data_i : next_rs2;
     end
 
     rs1_data_o = rs1_ff;

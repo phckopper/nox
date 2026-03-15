@@ -271,8 +271,12 @@ module decode
   register_file u_register_file(
     .clk       (clk),
     .rst       (rst),
-    .rs1_addr_i(instr_dec.rs1),
-    .rs2_addr_i(instr_dec.rs2),
+    // During a load-use stall (id_ready_i=0), the FIFO is not consumed so
+    // instr_dec points to the NEXT instruction, not the stalled one.
+    // The write-through comparison must use the stalled instruction's register
+    // addresses (from id_ex_ff) so WB's loaded value reaches rs1_ff/rs2_ff.
+    .rs1_addr_i(id_ready_i ? raddr_t'(instr_dec.rs1) : id_ex_ff.rs1_addr),
+    .rs2_addr_i(id_ready_i ? raddr_t'(instr_dec.rs2) : id_ex_ff.rs2_addr),
     .rd_addr_i (wb_dec_i.rd_addr),
     .rd_data_i (wb_dec_i.rd_data),
     .we_i      (wb_dec_i.we_rd),
