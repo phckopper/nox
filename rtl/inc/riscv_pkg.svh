@@ -213,6 +213,9 @@
     logic         mret;
     logic         wfi;
     s_trap_info_t trap;
+    // Branch predictor: set when the BP predicted this instruction as a
+    // taken branch so execute can suppress the redirect on correct predictions.
+    logic         bp_taken;
   } s_id_ex_t;
 
   typedef struct packed {

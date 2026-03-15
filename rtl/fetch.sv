@@ -24,10 +24,16 @@ module fetch
   // From EXEC stg
   input                 fetch_req_i,
   input   pc_t          fetch_addr_i,
+  // Branch predictor update from execute
+  input                 bp_update_i,
+  input   pc_t          bp_update_pc_i,
+  input   logic         bp_update_taken_i,
+  input   pc_t          bp_update_target_i,
   // To DEC I/F
   output  valid_t       fetch_valid_o,
   input   ready_t       fetch_ready_i,
   output  instr_raw_t   fetch_instr_o,
+  output  logic         fetch_bp_taken_o,  // BP predicted this instruction taken
   // Trap - Instruction access fault
   output  s_trap_info_t trap_info_o
 );
@@ -36,7 +42,7 @@ module fetch
   logic         get_next_instr;
   logic         write_instr;
   buffer_t      buffer_space;
-  instr_raw_t   instr_buffer;
+  instr_raw_t   instr_buffer;  // driven by assign from l0_data_out[31:0]
   logic         full_fifo;
   logic         data_valid;
   logic         data_ready;
@@ -49,9 +55,20 @@ module fetch
   cb_addr_t     pc_addr_ff, next_pc_addr;
   cb_addr_t     pc_buff_ff, next_pc_buff;
   logic         req_ff, next_req;
-  logic         valid_txn_i, valid_txn_o;
+  logic         valid_txn_i;
+  logic         valid_txn_o;  // driven by assign from ot_data_out[0]
   logic         addr_ready;
   logic         instr_access_fault;
+
+  logic         predict_taken;
+  pc_t          predict_target;
+
+  // OT FIFO extended to 2 bits: [1]=bp_taken_for_this_request, [0]=valid_txn
+  logic [1:0]   ot_data_out;
+  logic         bp_taken_txn;   // bp_taken propagated from OT FIFO to L0 FIFO
+
+  // L0 FIFO extended to 33 bits: [32]=bp_taken, [31:0]=instruction
+  logic [32:0]  l0_data_out;
 
   typedef enum logic [1:0] {
     F_STP,
@@ -100,7 +117,15 @@ module fetch
 
         if (req_ff && addr_ready) begin
           valid_txn_i = 1'b1;
-          next_pc_addr = pc_addr_ff + 'd4;
+          // If the predictor says this fetch address is a taken branch,
+          // redirect to the predicted target instead of falling through.
+          // The confirmed-jump redirect (fetch_req_i) takes priority via
+          // the jump block below.
+          if (predict_taken && ~jump) begin
+            next_pc_addr = predict_target;
+          end else begin
+            next_pc_addr = pc_addr_ff + 'd4;
+          end
         end
 
         if ((req_ff && addr_ready) || ~req_ff) begin
@@ -148,6 +173,13 @@ module fetch
     instr_cb_mosi_o.rd_addr       = req_ff ? ((st_ff == F_CLR) ? pc_buff_ff : pc_addr_ff) : '0;
     instr_cb_mosi_o.rd_size       = req_ff ? cb_size_t'(CB_WORD) : cb_size_t'('0);
   end : addr_chn_req
+
+  // Decode OT FIFO output: bit[0]=valid_txn, bit[1]=bp_taken
+  assign valid_txn_o = ot_data_out[0];
+  assign bp_taken_txn = ot_data_out[1];
+  // Decode L0 FIFO output: bits[31:0]=instruction, bit[32]=bp_taken
+  assign instr_buffer    = instr_raw_t'(l0_data_out[31:0]);
+  assign fetch_bp_taken_o = l0_data_out[32];
 
   always_comb begin : rd_chn
     write_instr = 'b0;
@@ -210,38 +242,57 @@ module fetch
     end
   end : fetch_proc_if
 
+  // OT tracking FIFO: WIDTH=2, bit[1]=bp_taken, bit[0]=valid_txn.
+  // bp_taken captures whether the BP predicted this fetch address as a
+  // taken branch, so the tag can travel with the instruction to decode/execute.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (1)
+    .WIDTH    (2)
   ) u_fifo_ot_rd (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  ((req_ff && addr_ready)),
     .read_i   (read_ot_fifo),
-    .data_i   (valid_txn_i),
-    .data_o   (valid_txn_o),
+    .data_i   ({predict_taken && ~jump, valid_txn_i}),
+    .data_o   (ot_data_out),
     .error_o  (),
     .full_o   (),
     .empty_o  (ot_empty),
     .ocup_o   ()
   );
 
+  // Instruction FIFO: WIDTH=33, bit[32]=bp_taken, bits[31:0]=instruction.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (32)
+    .WIDTH    (33)
   ) u_fifo_l0 (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  (write_instr),
     .read_i   (get_next_instr),
-    .data_i   (instr_cb_miso_i.rd_data),
-    .data_o   (instr_buffer),
+    .data_i   ({bp_taken_txn, instr_cb_miso_i.rd_data}),
+    .data_o   (l0_data_out),
     .error_o  (),
     .full_o   (full_fifo),
     .empty_o  (),
     .ocup_o   (buffer_space)
+  );
+
+  branch_predictor u_branch_predictor (
+    .clk               (clk),
+    .rst               (rst),
+    // Query: use current fetch address so the prediction is ready
+    // combinationally when computing next_pc_addr.
+    .fetch_pc_i        (pc_addr_ff),
+    .predict_taken_o   (predict_taken),
+    .predict_target_o  (predict_target),
+    // Update from execute on every resolved branch/jump
+    .update_i          (bp_update_i),
+    .update_pc_i       (bp_update_pc_i),
+    .update_taken_i    (bp_update_taken_i),
+    .update_target_i   (bp_update_target_i)
   );
 
 `ifdef COCOTB_SIM

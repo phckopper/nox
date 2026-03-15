@@ -22,6 +22,7 @@ module decode
   input   valid_t       fetch_valid_i,
   output  ready_t       fetch_ready_o,
   input   instr_raw_t   fetch_instr_i,
+  input   logic         fetch_bp_taken_i,  // BP predicted this instruction taken
   // From MEM/WB stg I/F
   input   s_wb_t        wb_dec_i,
   // To EXEC stg I/F
@@ -29,7 +30,10 @@ module decode
   output  rdata_t       rs1_data_o,
   output  rdata_t       rs2_data_o,
   output  valid_t       id_valid_o,
-  input   ready_t       id_ready_i
+  input   ready_t       id_ready_i,
+  // PC tracking update from execute on correct prediction (no pipeline flush)
+  input                 decode_pc_update_i,
+  input   pc_t          decode_pc_update_addr_i
 );
   valid_t     dec_valid_ff, next_vld_dec;
   s_instr_t   instr_dec;
@@ -220,6 +224,14 @@ module decode
       next_id_ex.pc_dec  = pc_jump_i;
     end
 
+    // When execute correctly predicted a JAL/taken-branch and suppressed
+    // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment by 4
+    // from the jump's PC instead of the actual target.  Use the dedicated
+    // update signal to fix up pc_dec without flushing the pipeline.
+    if (decode_pc_update_i && ~jump_i) begin
+      next_id_ex.pc_dec = decode_pc_update_addr_i;
+    end
+
     next_id_ex.trap.pc_addr = next_id_ex.pc_dec;
 
     next_wait_inst = wait_inst_ff;
@@ -245,6 +257,10 @@ module decode
         next_wfi_stop = 'b0;
       end
     end
+
+    // Propagate branch-predictor tag alongside the decoded instruction.
+    // Only set when there is a valid instruction being consumed.
+    next_id_ex.bp_taken = fetch_bp_taken_i;
 
     // We are stalling due to bp on the LSU
     if (~id_ready_i) begin

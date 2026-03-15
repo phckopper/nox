@@ -36,6 +36,14 @@ module execute
   // To FETCH stg
   output  logic             fetch_req_o,
   output  pc_t              fetch_addr_o,
+  // To DECODE stg — PC tracking update on correct prediction (no flush)
+  output  logic             decode_pc_update_o,
+  output  pc_t              decode_pc_update_addr_o,
+  // Branch predictor update
+  output  logic             bp_update_o,
+  output  pc_t              bp_update_pc_o,
+  output  logic             bp_update_taken_o,
+  output  pc_t              bp_update_target_o,
   // Trap signals
   input   s_trap_info_t     fetch_trap_i,
   input   s_trap_lsu_info_t lsu_trap_i
@@ -52,12 +60,33 @@ module execute
   logic         jump_or_branch;
   s_branch_t    branch_ff, next_branch;
   s_jump_t      jump_ff, next_jump;
+  // PC of the branch/jump instruction held in branch_ff / jump_ff
+  pc_t          branch_pc_ff, next_branch_pc;
+  pc_t          jump_pc_ff, next_jump_pc;
+  // BP state carried alongside branch_ff / jump_ff
+  logic         bp_taken_for_branch_ff, next_bp_taken_for_branch;
+  logic         bp_taken_for_jump_ff, next_bp_taken_for_jump;
+  logic         is_jal_for_jump_ff, next_is_jal_for_jump;
+  // Correct-prediction wires (combinational, used in both alu_proc and fetch_req)
+  logic         correct_branch_pred;
+  logic         correct_jump_pred;
+  logic         no_jump_guard;
   rdata_t       csr_rdata;
   s_trap_info_t trap_out;
   logic         will_jump_next_clk;
   logic         eval_trap;
   logic         load_use_hazard;
   s_trap_info_t instr_addr_misaligned;
+
+  // A correct prediction means the BP already redirected fetch to the right
+  // target, so execute must NOT fire fetch_req_o again (that would flush the
+  // already-correct in-flight fetches and re-fetch redundantly).
+  assign correct_branch_pred = branch_ff.b_act && branch_ff.take_branch &&
+                               bp_taken_for_branch_ff;
+  // Only suppress for JAL (deterministic target = pc+imm); JALR may have a
+  // varying target (rs1+imm) so we always let execute redirect for JALR.
+  assign correct_jump_pred   = jump_ff.j_act && bp_taken_for_jump_ff &&
+                               is_jal_for_jump_ff;
 
   function automatic branch_dec(branch_t op, rdata_t rs1, rdata_t rs2);
     logic         take_branch;
@@ -161,7 +190,13 @@ module execute
       id_ready_o           = 'b0;
     end
 
-    if (jump_or_branch) begin
+    // Suppress we_rd for instructions on the wrong speculative path:
+    // Case 1: a taken branch/jump resolved — the following fall-through
+    //         instruction is wrong-path, UNLESS BP correctly predicted it.
+    // Case 2: branch was predicted taken but actually not-taken — the
+    //         instruction from the speculative target path must be squashed.
+    if ((jump_or_branch && ~correct_branch_pred && ~correct_jump_pred) ||
+        (branch_ff.b_act && ~branch_ff.take_branch && bp_taken_for_branch_ff)) begin
       next_ex_mem_wb.we_rd = 'b0;
     end
 
@@ -183,13 +218,28 @@ module execute
 
     jump_or_branch = ((branch_ff.b_act && branch_ff.take_branch) || jump_ff.j_act);
 
+    // Allow processing of the next branch/jump even when jump_or_branch=1, as
+    // long as the previous branch/jump was correctly predicted (pipeline was
+    // never flushed, so the current instruction is on the right path).
+    no_jump_guard = ~jump_or_branch || correct_jump_pred || correct_branch_pred;
+
     next_branch.b_act   = id_ex_i.branch && ~lsu_bp_i && ~load_use_hazard;
     next_branch.b_addr  = id_ex_i.pc_dec + id_ex_i.imm;
-    next_branch.take_branch  = ~jump_or_branch &&
+    next_branch.take_branch  = no_jump_guard &&
                                branch_dec(branch_t'(id_ex_i.f3), op1, op2);
 
-    next_jump.j_act  = ~jump_or_branch && id_ex_i.jump && ~lsu_bp_i && ~load_use_hazard;
+    next_jump.j_act  = no_jump_guard && id_ex_i.jump && ~lsu_bp_i && ~load_use_hazard;
     next_jump.j_addr = {res[31:1], 1'b0};
+
+    // Track the instruction PC so the predictor update carries the right address.
+    next_branch_pc = next_branch.b_act ? id_ex_i.pc_dec : branch_pc_ff;
+    next_jump_pc   = next_jump.j_act   ? id_ex_i.pc_dec : jump_pc_ff;
+
+    // Track BP state so execute can detect correct predictions and suppress
+    // the redundant fetch_req_o / FIFO flush that would otherwise occur.
+    next_bp_taken_for_branch = next_branch.b_act ? id_ex_i.bp_taken : bp_taken_for_branch_ff;
+    next_bp_taken_for_jump   = next_jump.j_act   ? id_ex_i.bp_taken : bp_taken_for_jump_ff;
+    next_is_jal_for_jump     = next_jump.j_act   ? (id_ex_i.rs1_op == PC) : is_jal_for_jump_ff;
 
     fwd_wdata = (id_ex_i.lsu == LSU_STORE) &&
                 (ex_mem_wb_ff.we_rd) &&
@@ -219,16 +269,66 @@ module execute
     end
   end : jump_lsu_mgmt
 
-  always_comb begin : fetch_req
-    fetch_req_o  = '0;
-    fetch_addr_o = '0;
+  // Branch predictor update — fires for every resolved branch (taken or
+  // not-taken) and every unconditional jump.  Jumps are always "taken".
+  always_comb begin : bp_update_proc
+    bp_update_o        = branch_ff.b_act || jump_ff.j_act;
+    bp_update_taken_o  = branch_ff.b_act ? branch_ff.take_branch : 1'b1;
+    bp_update_target_o = branch_ff.b_act ? branch_ff.b_addr      : jump_ff.j_addr;
+    bp_update_pc_o     = branch_ff.b_act ? branch_pc_ff          : jump_pc_ff;
+  end : bp_update_proc
 
-    fetch_req_o  = ((branch_ff.b_act && branch_ff.take_branch) || jump_ff.j_act);
-    fetch_addr_o = (branch_ff.b_act) ? branch_ff.b_addr : jump_ff.j_addr;
+  always_comb begin : fetch_req
+    fetch_req_o             = '0;
+    fetch_addr_o            = '0;
+    decode_pc_update_o      = 1'b0;
+    decode_pc_update_addr_o = pc_t'('0);
+
+    // Branch cases:
+    //  taken  + not-predicted  → redirect to target (same as before)
+    //  taken  + correct-pred   → SUPPRESS (fetch already at target)
+    //  taken  + wrong-target   → redirect (handled conservatively: only suppress
+    //                            when taken AND predicted, target verified via BTB)
+    //  not-taken + predicted   → MISPREDICTION: redirect to fall-through PC+4
+    //  not-taken + unpredicted → no redirect needed (sequential fetch continues)
+    //
+    // Jump (JAL only) cases:
+    //  j_act + correct-pred  → SUPPRESS
+    //  j_act + not-predicted → redirect as before
+    //  j_act + JALR          → always redirect (target may vary per call-site)
+    if (branch_ff.b_act) begin
+      if (branch_ff.take_branch && ~correct_branch_pred) begin
+        // Taken but not correctly predicted: redirect to actual target
+        fetch_req_o  = 1'b1;
+        fetch_addr_o = branch_ff.b_addr;
+      end else if (~branch_ff.take_branch && bp_taken_for_branch_ff) begin
+        // Not taken but BP predicted taken: flush speculative target fetches
+        fetch_req_o  = 1'b1;
+        fetch_addr_o = branch_pc_ff + 4;  // fall-through
+      end
+    end
+    if (jump_ff.j_act && ~correct_jump_pred) begin
+      fetch_req_o  = 1'b1;
+      fetch_addr_o = jump_ff.j_addr;
+    end
 
     if (trap_out.active) begin
       fetch_req_o  = 'b1;
       fetch_addr_o = trap_out.pc_addr;
+    end
+
+    // When a JAL/taken-branch is correctly predicted, fetch_req_o stays 0
+    // (no flush needed) but decode never sees jump_i=1, so pc_dec is not
+    // updated to the actual target.  Fire a dedicated PC-update pulse so
+    // decode can fix up pc_dec without flushing the pipeline.
+    if (next_jump.j_act && id_ex_i.bp_taken && (id_ex_i.rs1_op == PC)) begin
+      // Correctly-predicted JAL: target was pc+imm (deterministic)
+      decode_pc_update_o      = 1'b1;
+      decode_pc_update_addr_o = next_jump.j_addr;
+    end else if (next_branch.b_act && next_branch.take_branch && id_ex_i.bp_taken) begin
+      // Correctly-predicted taken branch
+      decode_pc_update_o      = 1'b1;
+      decode_pc_update_addr_o = next_branch.b_addr;
     end
 
     eval_trap = id_ready_o &&
@@ -239,14 +339,24 @@ module execute
 
   `CLK_PROC(clk, rst) begin
     `RST_TYPE(rst) begin
-      ex_mem_wb_ff <= `OP_RST_L;
-      branch_ff    <= s_branch_t'('h0);
-      jump_ff      <= s_jump_t'('h0);
+      ex_mem_wb_ff         <= `OP_RST_L;
+      branch_ff            <= s_branch_t'('h0);
+      jump_ff              <= s_jump_t'('h0);
+      branch_pc_ff         <= pc_t'('0);
+      jump_pc_ff           <= pc_t'('0);
+      bp_taken_for_branch_ff <= 1'b0;
+      bp_taken_for_jump_ff   <= 1'b0;
+      is_jal_for_jump_ff     <= 1'b0;
     end
     else begin
-      ex_mem_wb_ff <= next_ex_mem_wb;
-      branch_ff    <= next_branch;
-      jump_ff      <= next_jump;
+      ex_mem_wb_ff         <= next_ex_mem_wb;
+      branch_ff            <= next_branch;
+      jump_ff              <= next_jump;
+      branch_pc_ff         <= next_branch_pc;
+      jump_pc_ff           <= next_jump_pc;
+      bp_taken_for_branch_ff <= next_bp_taken_for_branch;
+      bp_taken_for_jump_ff   <= next_bp_taken_for_jump;
+      is_jal_for_jump_ff     <= next_is_jal_for_jump;
     end
   end
 
