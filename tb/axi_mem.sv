@@ -193,7 +193,7 @@ module axi_mem
     // Address phase
     if (axi_mosi.awvalid && axi_miso.awready) begin
       next_axi_wid = axi_mosi.awid;
-      if (axi_mosi.awaddr == 'hA000_0000) begin
+      if (axi_mosi.awaddr == 'hA000_0000 || axi_mosi.awaddr == 'hD000_0008) begin
         next_char = 'b1;
       end
       else if (axi_mosi.awaddr == 'hB000_0000) begin
@@ -275,6 +275,9 @@ module axi_mem
       byte_sel_rd  = axi_mosi.araddr[1:0];
       next_axi_rid = axi_mosi.arid;
       if (raw_hit) begin
+        // Start from current memory state so bytes not covered by the pending
+        // write reflect any earlier committed writes to the same word.
+        next_rd_data = mem_ff[rd_addr];
         for (int i=0;i<4;i++) begin
           if (axi_mosi.wstrb[i])
             next_rd_data[i*8+:8] = axi_mosi.wdata[i*8+:8];

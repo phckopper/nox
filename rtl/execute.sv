@@ -76,6 +76,8 @@ module execute
   logic         will_jump_next_clk;
   logic         eval_trap;
   logic         load_use_hazard;
+  logic         mispred_not_taken;
+  logic         wrong_path;
   s_trap_info_t instr_addr_misaligned;
 
   // A correct prediction means the BP already redirected fetch to the right
@@ -223,12 +225,29 @@ module execute
     // never flushed, so the current instruction is on the right path).
     no_jump_guard = ~jump_or_branch || correct_jump_pred || correct_branch_pred;
 
-    next_branch.b_act   = id_ex_i.branch && ~lsu_bp_i && ~load_use_hazard;
+    // When recovering from a not-taken branch misprediction (branch was
+    // predicted taken but actually not taken), the instruction currently in
+    // execute arrived from the wrong speculative path.  We must squash its
+    // branch/jump so it cannot register stale control-flow data into
+    // branch_ff/jump_ff, which would fire a spurious fetch redirect next cycle.
+    mispred_not_taken = branch_ff.b_act && ~branch_ff.take_branch &&
+                        bp_taken_for_branch_ff;
+
+    // Instruction currently in execute is on the wrong speculative path when:
+    // Case 1: a taken branch/jump just resolved and BP did not correctly predict it
+    // Case 2: BP predicted taken but branch is actually not-taken (mispred_not_taken)
+    // Wrong-path STOREs must be suppressed to prevent memory corruption.
+    wrong_path        = (jump_or_branch && ~correct_branch_pred && ~correct_jump_pred) ||
+                        mispred_not_taken;
+
+    next_branch.b_act   = id_ex_i.branch && ~lsu_bp_i && ~load_use_hazard &&
+                          ~wrong_path;
     next_branch.b_addr  = id_ex_i.pc_dec + id_ex_i.imm;
     next_branch.take_branch  = no_jump_guard &&
                                branch_dec(branch_t'(id_ex_i.f3), op1, op2);
 
-    next_jump.j_act  = no_jump_guard && id_ex_i.jump && ~lsu_bp_i && ~load_use_hazard;
+    next_jump.j_act  = no_jump_guard && id_ex_i.jump && ~lsu_bp_i &&
+                       ~load_use_hazard && ~wrong_path;
     next_jump.j_addr = {res[31:1], 1'b0};
 
     // Track the instruction PC so the predictor update carries the right address.
@@ -246,7 +265,7 @@ module execute
                 (ex_mem_wb_ff.rd_addr == id_ex_i.rs2_addr) &&
                 (ex_mem_wb_ff.rd_addr != raddr_t'('h0));
 
-    lsu_o.op_typ  = load_use_hazard ? NO_LSU : id_ex_i.lsu;
+    lsu_o.op_typ  = (load_use_hazard || wrong_path) ? NO_LSU : id_ex_i.lsu;
     lsu_o.width   = id_ex_i.lsu_w;
     lsu_o.addr    = res;
     lsu_o.wdata   = rs2_data_i;
@@ -359,6 +378,13 @@ module execute
       is_jal_for_jump_ff     <= next_is_jal_for_jump;
     end
   end
+
+`ifdef SIMULATION
+  // Debug log: branch/jump resolutions, fetch redirects, mispredictions,
+  // load-use hazards, forwarding events, and BP updates.
+  // Outputs to ex_debug_nox.txt in the working directory.
+  // (debug file logging removed — was slowing simulation)
+`endif
 
   csr #(
     .SUPPORT_DEBUG      (SUPPORT_DEBUG),

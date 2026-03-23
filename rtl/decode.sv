@@ -228,8 +228,25 @@ module decode
     // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment by 4
     // from the jump's PC instead of the actual target.  Use the dedicated
     // update signal to fix up pc_dec without flushing the pipeline.
+    //
+    // When execute correctly predicted a JAL/taken-branch and suppressed
+    // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment by 4
+    // from the jump's PC instead of the actual target.  Use the dedicated
+    // update signal to fix up pc_dec without flushing the pipeline.
+    //
+    // There are three cases:
+    //  a) An instruction is being consumed this cycle (fetch_valid_i && id_ready_i):
+    //     set pc_dec = TARGET directly so the instruction gets the right PC.
+    //  b) wait_inst_ff=0 (after a misprediction redirect): the +4 increment does
+    //     NOT fire when the next instruction arrives, so set TARGET directly.
+    //  c) FIFO empty, wait_inst_ff=1: +4 WILL fire on next arrival → set T-4.
+    //     (When id_ready_i=0 the stall override below discards this anyway.)
     if (decode_pc_update_i && ~jump_i) begin
-      next_id_ex.pc_dec = decode_pc_update_addr_i;
+      if ((fetch_valid_i && id_ready_i) || ~wait_inst_ff) begin
+        next_id_ex.pc_dec = decode_pc_update_addr_i;
+      end else begin
+        next_id_ex.pc_dec = decode_pc_update_addr_i - 'd4;
+      end
     end
 
     next_id_ex.trap.pc_addr = next_id_ex.pc_dec;
@@ -320,16 +337,16 @@ module decode
     end
   end
 
-  integer ret_fd, j;
+  integer j;
   initial begin
-      ret_fd = $fopen("retired_instr_nox.txt", "w");
       j = 0;
   end
 
   always_ff @ (posedge clk) begin
     if (will_be_executed) begin
-      $fdisplay (ret_fd, "[%d] pc=[%x] instr=[%x]", j, id_ex_ff.pc_dec, instr_retired_ff);
       j++;
+      if (j % 10000000 == 0)
+        $display("[HEARTBEAT] %0d instructions retired, last pc=%08h", j, id_ex_ff.pc_dec);
     end
   end
 
