@@ -22,7 +22,8 @@ module decode
   input   valid_t       fetch_valid_i,
   output  ready_t       fetch_ready_o,
   input   instr_raw_t   fetch_instr_i,
-  input   logic         fetch_bp_taken_i,  // BP predicted this instruction taken
+  input   logic         fetch_bp_taken_i,          // BP predicted this instruction taken
+  input   pc_t          fetch_bp_predict_target_i, // P2: BP predicted target address
   // From MEM/WB stg I/F
   input   s_wb_t        wb_dec_i,
   // To EXEC stg I/F
@@ -277,7 +278,8 @@ module decode
 
     // Propagate branch-predictor tag alongside the decoded instruction.
     // Only set when there is a valid instruction being consumed.
-    next_id_ex.bp_taken = fetch_bp_taken_i;
+    next_id_ex.bp_taken          = fetch_bp_taken_i;
+    next_id_ex.bp_predict_target = fetch_bp_predict_target_i;
 
     // We are stalling due to bp on the LSU
     if (~id_ready_i) begin

@@ -44,6 +44,10 @@ module execute
   output  pc_t              bp_update_pc_o,
   output  logic             bp_update_taken_o,
   output  pc_t              bp_update_target_o,
+  // P2: RAS call/return signals (routed through fetch to branch_predictor)
+  output  logic             bp_is_call_o,
+  output  pc_t              bp_call_ret_addr_o,
+  output  logic             bp_is_return_o,
   // Trap signals
   input   s_trap_info_t     fetch_trap_i,
   input   s_trap_lsu_info_t lsu_trap_i
@@ -67,6 +71,10 @@ module execute
   logic         bp_taken_for_branch_ff, next_bp_taken_for_branch;
   logic         bp_taken_for_jump_ff, next_bp_taken_for_jump;
   logic         is_jal_for_jump_ff, next_is_jal_for_jump;
+  // P2: predicted target and call/return register operand addresses
+  pc_t          bp_predict_target_for_jump_ff, next_bp_predict_target_for_jump;
+  raddr_t       rd_addr_for_jump_ff,  next_rd_addr_for_jump;
+  raddr_t       rs1_addr_for_jump_ff, next_rs1_addr_for_jump;
   // Correct-prediction wires (combinational, used in both alu_proc and fetch_req)
   logic         correct_branch_pred;
   logic         correct_jump_pred;
@@ -85,10 +93,12 @@ module execute
   // already-correct in-flight fetches and re-fetch redundantly).
   assign correct_branch_pred = branch_ff.b_act && branch_ff.take_branch &&
                                bp_taken_for_branch_ff;
-  // Only suppress for JAL (deterministic target = pc+imm); JALR may have a
-  // varying target (rs1+imm) so we always let execute redirect for JALR.
+  // Suppress for JAL (deterministic target = pc+imm) OR for correctly-
+  // predicted JALR: when the BTB/RAS predicted the exact same target that
+  // execute resolved, the pipeline is already on the right path.
   assign correct_jump_pred   = jump_ff.j_act && bp_taken_for_jump_ff &&
-                               is_jal_for_jump_ff;
+                               (is_jal_for_jump_ff ||
+                                jump_ff.j_addr == bp_predict_target_for_jump_ff);
 
   function automatic branch_dec(branch_t op, rdata_t rs1, rdata_t rs2);
     logic         take_branch;
@@ -256,9 +266,13 @@ module execute
 
     // Track BP state so execute can detect correct predictions and suppress
     // the redundant fetch_req_o / FIFO flush that would otherwise occur.
-    next_bp_taken_for_branch = next_branch.b_act ? id_ex_i.bp_taken : bp_taken_for_branch_ff;
-    next_bp_taken_for_jump   = next_jump.j_act   ? id_ex_i.bp_taken : bp_taken_for_jump_ff;
-    next_is_jal_for_jump     = next_jump.j_act   ? (id_ex_i.rs1_op == PC) : is_jal_for_jump_ff;
+    next_bp_taken_for_branch       = next_branch.b_act ? id_ex_i.bp_taken         : bp_taken_for_branch_ff;
+    next_bp_taken_for_jump         = next_jump.j_act   ? id_ex_i.bp_taken         : bp_taken_for_jump_ff;
+    next_is_jal_for_jump           = next_jump.j_act   ? (id_ex_i.rs1_op == PC)   : is_jal_for_jump_ff;
+    // P2: predicted target and register addresses for call/return detection
+    next_bp_predict_target_for_jump = next_jump.j_act  ? id_ex_i.bp_predict_target : bp_predict_target_for_jump_ff;
+    next_rd_addr_for_jump           = next_jump.j_act  ? id_ex_i.rd_addr           : rd_addr_for_jump_ff;
+    next_rs1_addr_for_jump          = next_jump.j_act  ? id_ex_i.rs1_addr          : rs1_addr_for_jump_ff;
 
     fwd_wdata = (id_ex_i.lsu == LSU_STORE) &&
                 (ex_mem_wb_ff.we_rd) &&
@@ -295,6 +309,13 @@ module execute
     bp_update_taken_o  = branch_ff.b_act ? branch_ff.take_branch : 1'b1;
     bp_update_target_o = branch_ff.b_act ? branch_ff.b_addr      : jump_ff.j_addr;
     bp_update_pc_o     = branch_ff.b_act ? branch_pc_ff          : jump_pc_ff;
+
+    // P2: RAS push on JAL call (rd=x1), pop on JALR return (rs1=x1)
+    bp_is_call_o       = jump_ff.j_act &&  is_jal_for_jump_ff &&
+                         (rd_addr_for_jump_ff  == raddr_t'(5'd1));
+    bp_call_ret_addr_o = jump_pc_ff + 'd4;
+    bp_is_return_o     = jump_ff.j_act && ~is_jal_for_jump_ff &&
+                         (rs1_addr_for_jump_ff == raddr_t'(5'd1));
   end : bp_update_proc
 
   always_comb begin : fetch_req
@@ -344,6 +365,11 @@ module execute
       // Correctly-predicted JAL: target was pc+imm (deterministic)
       decode_pc_update_o      = 1'b1;
       decode_pc_update_addr_o = next_jump.j_addr;
+    end else if (next_jump.j_act && id_ex_i.bp_taken && (id_ex_i.rs1_op != PC) &&
+                 (next_jump.j_addr == id_ex_i.bp_predict_target)) begin
+      // Correctly-predicted JALR (BTB/RAS matched actual target)
+      decode_pc_update_o      = 1'b1;
+      decode_pc_update_addr_o = next_jump.j_addr;
     end else if (next_branch.b_act && next_branch.take_branch && id_ex_i.bp_taken) begin
       // Correctly-predicted taken branch
       decode_pc_update_o      = 1'b1;
@@ -358,32 +384,87 @@ module execute
 
   `CLK_PROC(clk, rst) begin
     `RST_TYPE(rst) begin
-      ex_mem_wb_ff         <= `OP_RST_L;
-      branch_ff            <= s_branch_t'('h0);
-      jump_ff              <= s_jump_t'('h0);
-      branch_pc_ff         <= pc_t'('0);
-      jump_pc_ff           <= pc_t'('0);
-      bp_taken_for_branch_ff <= 1'b0;
-      bp_taken_for_jump_ff   <= 1'b0;
-      is_jal_for_jump_ff     <= 1'b0;
+      ex_mem_wb_ff                 <= `OP_RST_L;
+      branch_ff                    <= s_branch_t'('h0);
+      jump_ff                      <= s_jump_t'('h0);
+      branch_pc_ff                 <= pc_t'('0);
+      jump_pc_ff                   <= pc_t'('0);
+      bp_taken_for_branch_ff       <= 1'b0;
+      bp_taken_for_jump_ff         <= 1'b0;
+      is_jal_for_jump_ff           <= 1'b0;
+      bp_predict_target_for_jump_ff <= pc_t'('0);
+      rd_addr_for_jump_ff          <= raddr_t'('0);
+      rs1_addr_for_jump_ff         <= raddr_t'('0);
     end
     else begin
-      ex_mem_wb_ff         <= next_ex_mem_wb;
-      branch_ff            <= next_branch;
-      jump_ff              <= next_jump;
-      branch_pc_ff         <= next_branch_pc;
-      jump_pc_ff           <= next_jump_pc;
-      bp_taken_for_branch_ff <= next_bp_taken_for_branch;
-      bp_taken_for_jump_ff   <= next_bp_taken_for_jump;
-      is_jal_for_jump_ff     <= next_is_jal_for_jump;
+      ex_mem_wb_ff                 <= next_ex_mem_wb;
+      branch_ff                    <= next_branch;
+      jump_ff                      <= next_jump;
+      branch_pc_ff                 <= next_branch_pc;
+      jump_pc_ff                   <= next_jump_pc;
+      bp_taken_for_branch_ff       <= next_bp_taken_for_branch;
+      bp_taken_for_jump_ff         <= next_bp_taken_for_jump;
+      is_jal_for_jump_ff           <= next_is_jal_for_jump;
+      bp_predict_target_for_jump_ff <= next_bp_predict_target_for_jump;
+      rd_addr_for_jump_ff          <= next_rd_addr_for_jump;
+      rs1_addr_for_jump_ff         <= next_rs1_addr_for_jump;
     end
   end
 
 `ifdef SIMULATION
-  // Debug log: branch/jump resolutions, fetch redirects, mispredictions,
-  // load-use hazards, forwarding events, and BP updates.
-  // Outputs to ex_debug_nox.txt in the working directory.
-  // (debug file logging removed — was slowing simulation)
+  // ── P1: Performance counters ─────────────────────────────────────────
+  // Counts are printed in a `final` block when $finish is called.
+  longint unsigned perf_cycles          = 0;
+  longint unsigned perf_load_use        = 0;
+  longint unsigned perf_branch_mispredict = 0;
+  longint unsigned perf_jalr_redirect   = 0;
+  longint unsigned perf_jal_btb_miss    = 0;
+  longint unsigned perf_fetch_bubble    = 0;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin  // rst=1 = normal operation (active-low reset)
+      perf_cycles <= perf_cycles + 1;
+
+      // Load-use stall: 1 cycle per event
+      if (load_use_hazard)
+        perf_load_use <= perf_load_use + 1;
+
+      // Branch mispredictions: taken-but-not-predicted or predicted-but-not-taken
+      if (branch_ff.b_act &&
+          ((branch_ff.take_branch && ~correct_branch_pred) ||
+           (~branch_ff.take_branch && bp_taken_for_branch_ff)))
+        perf_branch_mispredict <= perf_branch_mispredict + 1;
+
+      // JALR redirect: every unresolved JALR (would be fixed by RAS after warmup)
+      if (jump_ff.j_act && ~correct_jump_pred && ~is_jal_for_jump_ff)
+        perf_jalr_redirect <= perf_jalr_redirect + 1;
+
+      // JAL BTB miss: JAL not predicted (cold or BTB evicted)
+      if (jump_ff.j_act && ~correct_jump_pred && is_jal_for_jump_ff)
+        perf_jal_btb_miss <= perf_jal_btb_miss + 1;
+
+      // Fetch bubble: execute ready but nothing from decode (pipeline empty)
+      if (id_ready_o && ~id_valid_i)
+        perf_fetch_bubble <= perf_fetch_bubble + 1;
+    end
+  end
+
+  final begin
+    $display("");
+    $display("[PERF] ============ Performance Counters ============");
+    $display("[PERF]  Total cycles          : %0d", perf_cycles);
+    $display("[PERF]  Load-use stalls       : %0d cycles  (%0.1f%%)",
+             perf_load_use,    100.0 * perf_load_use          / perf_cycles);
+    $display("[PERF]  Branch mispredictions : %0d events  (~3 cyc ea.)",
+             perf_branch_mispredict);
+    $display("[PERF]  JALR redirects        : %0d events  (~3 cyc ea.)",
+             perf_jalr_redirect);
+    $display("[PERF]  JAL BTB misses        : %0d events  (~3 cyc ea.)",
+             perf_jal_btb_miss);
+    $display("[PERF]  Fetch bubbles         : %0d cycles  (%0.1f%%)",
+             perf_fetch_bubble, 100.0 * perf_fetch_bubble      / perf_cycles);
+    $display("[PERF] ================================================");
+  end
 `endif
 
   csr #(

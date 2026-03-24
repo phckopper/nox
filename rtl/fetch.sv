@@ -29,11 +29,16 @@ module fetch
   input   pc_t          bp_update_pc_i,
   input   logic         bp_update_taken_i,
   input   pc_t          bp_update_target_i,
+  // P2: RAS call/return signals from execute → branch_predictor
+  input   logic         bp_is_call_i,
+  input   pc_t          bp_call_ret_addr_i,
+  input   logic         bp_is_return_i,
   // To DEC I/F
   output  valid_t       fetch_valid_o,
   input   ready_t       fetch_ready_i,
   output  instr_raw_t   fetch_instr_o,
-  output  logic         fetch_bp_taken_o,  // BP predicted this instruction taken
+  output  logic         fetch_bp_taken_o,          // BP predicted taken
+  output  pc_t          fetch_bp_predict_target_o, // P2: BP predicted target
   // Trap - Instruction access fault
   output  s_trap_info_t trap_info_o
 );
@@ -63,12 +68,13 @@ module fetch
   logic         predict_taken;
   pc_t          predict_target;
 
-  // OT FIFO extended to 2 bits: [1]=bp_taken_for_this_request, [0]=valid_txn
-  logic [1:0]   ot_data_out;
-  logic         bp_taken_txn;   // bp_taken propagated from OT FIFO to L0 FIFO
+  // OT FIFO: [33:2]=predict_target, [1]=bp_taken, [0]=valid_txn  (34 bits)
+  logic [33:0]  ot_data_out;
+  logic         bp_taken_txn;   // bp_taken  propagated from OT FIFO to L0 FIFO
+  pc_t          bp_target_txn;  // predict_target propagated from OT FIFO to L0 FIFO
 
-  // L0 FIFO extended to 33 bits: [32]=bp_taken, [31:0]=instruction
-  logic [32:0]  l0_data_out;
+  // L0 FIFO: [64:33]=predict_target, [32]=bp_taken, [31:0]=instruction  (65 bits)
+  logic [64:0]  l0_data_out;
 
   typedef enum logic [1:0] {
     F_STP,
@@ -174,12 +180,14 @@ module fetch
     instr_cb_mosi_o.rd_size       = req_ff ? cb_size_t'(CB_WORD) : cb_size_t'('0);
   end : addr_chn_req
 
-  // Decode OT FIFO output: bit[0]=valid_txn, bit[1]=bp_taken
-  assign valid_txn_o = ot_data_out[0];
+  // Decode OT FIFO output: bit[0]=valid_txn, bit[1]=bp_taken, [33:2]=predict_target
+  assign valid_txn_o  = ot_data_out[0];
   assign bp_taken_txn = ot_data_out[1];
-  // Decode L0 FIFO output: bits[31:0]=instruction, bit[32]=bp_taken
-  assign instr_buffer    = instr_raw_t'(l0_data_out[31:0]);
-  assign fetch_bp_taken_o = l0_data_out[32];
+  assign bp_target_txn = ot_data_out[33:2];
+  // Decode L0 FIFO output: bits[31:0]=instruction, bit[32]=bp_taken, [64:33]=predict_target
+  assign instr_buffer              = instr_raw_t'(l0_data_out[31:0]);
+  assign fetch_bp_taken_o          = l0_data_out[32];
+  assign fetch_bp_predict_target_o = l0_data_out[64:33];
 
   always_comb begin : rd_chn
     write_instr = 'b0;
@@ -242,19 +250,19 @@ module fetch
     end
   end : fetch_proc_if
 
-  // OT tracking FIFO: WIDTH=2, bit[1]=bp_taken, bit[0]=valid_txn.
-  // bp_taken captures whether the BP predicted this fetch address as a
-  // taken branch, so the tag can travel with the instruction to decode/execute.
+  // OT tracking FIFO: WIDTH=34, [33:2]=predict_target, [1]=bp_taken, [0]=valid_txn.
+  // predict_taken and predict_target are captured at address-phase so they travel
+  // with the transaction and are forwarded into the L0 FIFO on the data phase.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (2)
+    .WIDTH    (34)
   ) u_fifo_ot_rd (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  ((req_ff && addr_ready)),
     .read_i   (read_ot_fifo),
-    .data_i   ({predict_taken && ~jump, valid_txn_i}),
+    .data_i   ({predict_target, predict_taken && ~jump, valid_txn_i}),
     .data_o   (ot_data_out),
     .error_o  (),
     .full_o   (),
@@ -262,17 +270,17 @@ module fetch
     .ocup_o   ()
   );
 
-  // Instruction FIFO: WIDTH=33, bit[32]=bp_taken, bits[31:0]=instruction.
+  // Instruction FIFO: WIDTH=65, [64:33]=predict_target, [32]=bp_taken, [31:0]=instruction.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (33)
+    .WIDTH    (65)
   ) u_fifo_l0 (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  (write_instr),
     .read_i   (get_next_instr),
-    .data_i   ({bp_taken_txn, instr_cb_miso_i.rd_data}),
+    .data_i   ({bp_target_txn, bp_taken_txn, instr_cb_miso_i.rd_data}),
     .data_o   (l0_data_out),
     .error_o  (),
     .full_o   (full_fifo),
@@ -292,7 +300,11 @@ module fetch
     .update_i          (bp_update_i),
     .update_pc_i       (bp_update_pc_i),
     .update_taken_i    (bp_update_taken_i),
-    .update_target_i   (bp_update_target_i)
+    .update_target_i   (bp_update_target_i),
+    // P2: RAS push/pop control from execute
+    .is_call_i         (bp_is_call_i),
+    .call_ret_addr_i   (bp_call_ret_addr_i),
+    .is_return_i       (bp_is_return_i)
   );
 
 `ifdef COCOTB_SIM

@@ -216,6 +216,10 @@
     // Branch predictor: set when the BP predicted this instruction as a
     // taken branch so execute can suppress the redirect on correct predictions.
     logic         bp_taken;
+    // BP predicted target address carried through the pipeline.
+    // Allows execute to suppress the JALR redirect when the BTB/RAS
+    // correctly predicted the return address (avoids the 3-cycle penalty).
+    pc_t          bp_predict_target;
   } s_id_ex_t;
 
   typedef struct packed {

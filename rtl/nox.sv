@@ -69,6 +69,10 @@ module nox
   pc_t              bp_update_pc;
   logic             bp_update_taken;
   pc_t              bp_update_target;
+  logic             bp_is_call;
+  pc_t              bp_call_ret_addr;
+  logic             bp_is_return;
+  pc_t              fetch_bp_predict_target;
   s_wb_t            wb_dec;
   logic             lsu_bp_data;
   s_trap_info_t     fetch_trap;
@@ -153,11 +157,16 @@ module nox
     .bp_update_pc_i        (bp_update_pc),
     .bp_update_taken_i     (bp_update_taken),
     .bp_update_target_i    (bp_update_target),
+    // P2: RAS call/return signals from execute
+    .bp_is_call_i          (bp_is_call),
+    .bp_call_ret_addr_i    (bp_call_ret_addr),
+    .bp_is_return_i        (bp_is_return),
     // To DEC I/F
     .fetch_valid_o         (fetch_valid),
     .fetch_ready_i         (fetch_ready),
     .fetch_instr_o         (fetch_instr),
     .fetch_bp_taken_o      (fetch_bp_taken),
+    .fetch_bp_predict_target_o (fetch_bp_predict_target),
     // Trap error fetching
     .trap_info_o           (fetch_trap)
   );
@@ -175,7 +184,8 @@ module nox
     .fetch_valid_i         (fetch_valid),
     .fetch_ready_o         (fetch_ready),
     .fetch_instr_i         (fetch_instr),
-    .fetch_bp_taken_i      (fetch_bp_taken),
+    .fetch_bp_taken_i          (fetch_bp_taken),
+    .fetch_bp_predict_target_i (fetch_bp_predict_target),
     // From MEM/WB stg I/F
     .wb_dec_i              (wb_dec),
     // To EXEC stg I/F
@@ -224,6 +234,10 @@ module nox
     .bp_update_pc_o        (bp_update_pc),
     .bp_update_taken_o     (bp_update_taken),
     .bp_update_target_o    (bp_update_target),
+    // P2: RAS call/return to fetch/branch_predictor
+    .bp_is_call_o          (bp_is_call),
+    .bp_call_ret_addr_o    (bp_call_ret_addr),
+    .bp_is_return_o        (bp_is_return),
     // From diff stgs
     .fetch_trap_i          (fetch_trap),
     .lsu_trap_i            (lsu_trap)

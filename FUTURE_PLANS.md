@@ -1,10 +1,30 @@
 # NOX RISC-V Core — Future Improvement Plans
 
-## Current Performance Baseline (2026-03-23)
+## Performance History
 
+### Baseline (2026-03-23) — no branch predictor improvements
 - **CoreMark/MHz: 0.909** at -O2, 300 MHz (NanGate 45nm)
 - **IPC ≈ 0.664** (365M instructions / 550M cycles, 500-iter CoreMark -O2)
-- ~34% of cycles wasted to stalls — breakdown estimated below
+
+### After P2+P3 (2026-03-24) — 4-entry RAS + 64-entry BTB
+- **CoreMark/MHz: 0.974** (+7.1% vs baseline), crcfinal=0xa14c ✓
+- **IPC ≈ 0.730** (~375M instructions / 513M cycles, +9.9% vs baseline)
+- Total ticks: 513,409,720 (vs 549,990,280 baseline)
+
+#### P2+P3 stall breakdown (500-iter -O2 CoreMark, 700M cycle window):
+| Source | Count | Est. cycles lost |
+|--------|-------|-----------------|
+| Fetch bubbles (total) | 107.1M cycles | **15.3%** of all cycles |
+| — Branch mispredictions | 24.8M events × ~3 cyc | ~74.5M (~70% of bubbles) |
+| — JAL BTB misses | 780K events × ~3 cyc | ~2.3M |
+| — JALR redirects | 268K events × ~3 cyc | ~0.8M ← RAS nearly eliminates these |
+| Load-use stalls | 9.9M cycles | **1.4%** |
+
+Branch mispredictions are now the clear dominant bottleneck (~10.6% of all cycles).
+JALR redirects are near-zero thanks to the RAS — down from ~9.5M projected cycles
+without RAS to ~0.8M with it. Load-use stalls are minor at 1.4%.
+
+**Next target: P5 (eliminate F_CLR, reduce mispredict penalty 3→2 cycles)**
 
 ---
 
@@ -33,10 +53,17 @@ around this at -O2 when possible, but cannot always. Eliminating it would requir
 re-introducing the long combinational path (or pipelining it at the cost of a 2-cycle
 penalty), so it is low priority.
 
-### 4. Branch misprediction penalty (~3 cycles)
+### 4. Fetch bubbles — misprediction penalty is the dominant cause (~3 cycles each)
 With a 4-stage pipeline, mispredictions detected in Execute require flushing Fetch and
-Decode and re-fetching from the correct PC. The bimodal BHT (64 entries) handles simple
-loops well after warmup, but aliasing and cold-start misses still occur.
+Decode and re-fetching from the correct PC. The fetch state machine enters F_CLR to
+drain in-flight AXI transactions before restarting — this is the source of the 3-cycle
+penalty. From P1 perf counters (2M cycle hello_world run): fetch bubbles were 14.8% of
+all cycles, with ~61% of those caused by branch mispredictions, JALR redirects, and JAL
+BTB misses. The bimodal BHT (64 entries) handles simple loops after warmup, but the
+redirect penalty itself is the main lever.
+
+An instruction cache does **not** help here — the testbench memory is already 1-cycle,
+so all fetch bubbles are structural (misprediction drain), not memory-latency driven.
 
 ### 5. Clock frequency — zero RTL change required
 Synthesis shows **+1.03 ns WNS** at 300 MHz (reg-to-reg critical path ≈ 2.30 ns).
@@ -96,17 +123,51 @@ Expected gain: **+33% raw CoreMark score** (CM/MHz unchanged).
 **Files:** `rtl/fetch.sv`, `rtl/execute.sv`
 
 Currently the pipeline takes 3 cycles to redirect after a misprediction (detect in EX
-→ F_CLR → new fetch begins). Investigate whether the F_CLR state can be eliminated by
-allowing fetch to accept the redirect address in a single cycle (bypass the OT FIFO
-flush). This is a pipeline restructuring change and requires careful verification.
+→ F_CLR → new fetch begins). The F_CLR state exists to drain in-flight AXI
+transactions before the OT/L0 FIFOs are cleared and the new fetch address is issued.
+The 3-cycle sequence is:
+- Cycle 1: execute detects mispredict, fires `fetch_req_i`
+- Cycle 2: fetch in F_CLR, draining outstanding AXI transaction(s)
+- Cycle 3: fetch fires new address request to AXI
+- Cycle 4: instruction arrives, pipeline resumes
 
-Expected gain: **+2–5% CM/MHz** (depends on misprediction frequency from P1 data).
+To eliminate F_CLR: assert `rd_ready=1` on the redirect cycle so the in-flight data
+beat completes immediately and is discarded, then clear the FIFOs and issue the new
+address in the same cycle — skipping F_CLR entirely. Requires careful verification
+that the OT/L0 FIFO clear does not corrupt a data beat arriving on the redirect cycle.
 
-### P6 — Evaluate 2-stage fetch pipeline / instruction cache
-If frequency is pushed beyond 400 MHz, the AXI fetch round-trip (1 cycle latency in
-the current axi_mem testbench model) may become the bottleneck. A small direct-mapped
-instruction cache (1–2 KB, 4-word lines) would hide DRAM latency and improve fetch
-throughput for loops. This is a significant addition.
+Fetch bubbles are the dominant stall source. From P1 perf data (hello_world, 2M
+cycles): ~61% of fetch bubbles are caused by misprediction/redirect penalties
+(branch mispredictions + JALR redirects + JAL BTB misses). This is the highest-value
+remaining optimization.
+
+Expected gain: **+3–5% CM/MHz**.
+
+### P5b — Increase L0_BUFFER_SIZE from 2 to 4
+**File:** `rtl/fetch.sv` (parameter only — no logic changes)
+
+The fetch FIFO currently holds 2 instructions. After any redirect the FIFO is cleared
+and the pipeline stalls until 2 new instructions arrive. A 4-entry FIFO absorbs
+momentary decode backpressure and reduces bubbles from buffer underrun after short
+redirects. Area cost is minimal (~4 × 33 bits of flop).
+
+Expected gain: **+1–2% CM/MHz**.
+
+### P6 — Instruction cache (only if memory latency increases)
+**Files:** `rtl/fetch.sv`, new `rtl/icache.sv`
+
+**Important:** In the current simulation the `axi_mem` testbench model has 1-cycle
+read latency — identical to a cache hit. An instruction cache would have zero impact
+on CoreMark score in this setup. All fetch bubbles are caused by misprediction
+redirects, not memory latency.
+
+A cache is only justified if:
+- The design is integrated with off-chip DRAM (50-100+ cycle latency), or
+- Clock is pushed beyond ~500 MHz where on-chip SRAM can no longer respond in 1 cycle.
+
+If added: a small direct-mapped cache (1–2 KB, 4-word lines) is sufficient for
+CoreMark's working set. This is a significant addition requiring tag/valid arrays,
+line-fill logic, and a miss-stall mechanism in fetch.
 
 ---
 
@@ -115,5 +176,6 @@ throughput for loops. This is a significant addition.
 | Idea | Reason |
 |------|--------|
 | Eliminate load-use stall entirely | Reintroduces the 3.11 ns in2out path that failed timing |
+| Instruction cache (current sim) | axi_mem is already 1-cycle; all bubbles are from mispredictions not memory latency |
 | Out-of-order execution | Major redesign; incompatible with current pipeline philosophy |
 | Superscalar (dual-issue) | Significant area cost; diminishing returns for RV32I embedded use |
