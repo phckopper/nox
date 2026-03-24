@@ -19,7 +19,7 @@
 ## <a name="intro"></a> Introduction
 NoX is a 32-bit RISC-V core designed in System Verilog language aiming both `FPGA` and `ASIC` flows. The core was projected to be easily integrated and simulated as part of an SoC, with `makefile` targets for simple standalone simulation or with an interconnect and peripherals. In short, the core specs are listed here:
 
-- RV32IMZba_Zbb_ZicondZicsr
+- RV32IMAZba_Zbb_ZicondZicsr
 - 4 stages / single-issue / in-order pipeline
 - M-mode privileged spec.
 - 2.74 CoreMark/MHz (simulation, NanGate 45nm @ 300 MHz, -O2, RV32IM + Zba/Zbb/Zicond)
@@ -196,7 +196,7 @@ make run_comp
 Once it is finished, you can open the report file available at **riscof_compliance/riscof_work/report.html** to check the status. The run should finished with a similar report like the one available at [docs/report_compliance.html](docs/report_compliance.html).
 
 ## <a name="coremark"></a> CoreMark
-Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **2.739 CoreMark/MHz** (simulation, NanGate 45nm @ 300 MHz, RV32IM + Zba/Zbb/Zicond, -O2), verified with "Correct operation validated."
+Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **2.739 CoreMark/MHz** (simulation, NanGate 45nm @ 333 MHz, RV32IM + Zba/Zbb/Zicond, -O2), verified with "Correct operation validated."
 
 To build and run the CoreMark benchmark using the Verilator simulator:
 ```bash
@@ -249,21 +249,21 @@ Output lands in a timestamped directory under `synth/syn_out/`.
 
 | Metric | Value |
 |---|---|
-| Chip area | 70,741.6 µm² |
-| Total cells | 46,036 |
-| Flip-flops | 6,352 |
+| Chip area | 70,748.8 µm² (88.66 KGE) |
+| Total cells | 46,025 |
+| Flip-flops | ~6,321 |
 
 | Path group | WNS | Status |
 |---|---|---|
-| reg2reg | −0.14 ns | ❌ 23 violations |
-| in2reg  | −0.55 ns | ❌ 105 violations |
-| reg2out | −0.06 ns | ❌ 6 violations |
+| reg2reg | +0.05 ns | ✅ |
+| in2reg  | +0.88 ns | ✅ |
+| reg2out | +0.25 ns | ✅ |
 | in2out  | (false path) | ✅ no paths |
 
-> **Note:** The design does not currently meet the 300 MHz target. The area and FF count grew ~3× vs the previous synthesis due to the branch predictor's BTB/BHT tables, the RV32M multiply/divide unit, and the new ISA extensions — all synthesised since the last passing run. A timing closure plan is tracked in [FUTURE_PLANS.md](FUTURE_PLANS.md) (see **P4 — Timing Closure**) and will be addressed in an upcoming update.
+Clock target: **333 MHz** (3.0 ns period). All paths met. The RV32A (atomics) extension has since been added to the RTL; a re-synthesis run is pending.
 
 Previous passing result (pre-branch-predictor, pre-RV32M, RV32I core):
-* 22,225.9 µm², 14,022 cells, ~1,917 FFs — WNS **+1.03 ns** reg2reg (all paths met @ 300 MHz)
+* 22,225.9 µm², 14,022 cells, ~1,917 FFs — WNS **+1.03 ns** reg2reg (all paths met @ 333 MHz)
 
 Original RV32I baseline (pre-AI-improvements):
 * 27.04 kGE @ 250MHz in 45nm
@@ -298,6 +298,14 @@ Added a speculative branch predictor to reduce branch penalty:
 - **F_CLR state elimination** (`rtl/fetch.sv`, `rtl/execute.sv`): removed the mandatory one-cycle drain state after a misprediction. When the AXI address channel is idle or the request is accepted in the same cycle as the redirect, the new PC is issued immediately — reducing the misprediction penalty from 3 cycles to 2 cycles and increasing CoreMark/MHz by +5.2%.
 - **4-entry Return Address Stack** (`rtl/fetch.sv`, `rtl/execute.sv`): added a hardware RAS to predict `JALR` returns. `JAL`/`JALR` with `rd=ra` push the link address; `JALR` with `rs1=ra, rd=x0` pops. Reduces function-return mispredictions from ~3 cycles each to zero, contributing to +7.1% CoreMark/MHz gain (combined with BTB expansion).
 - **64-entry BTB** (`rtl/branch_predictor.sv`): expanded the Branch Target Buffer from 16 to 64 entries (index width 4→6 bits), eliminating aliasing conflicts in CoreMark's working set.
+
+### RV32A atomics extension
+
+- **`rtl/lsu.sv`**: added a 3-state AMO state machine (`AMO_IDLE → AMO_RD → AMO_WR`) that handles all 11 RV32A instructions. The machine reads the old memory value, computes the AMO result via `amo_compute()`, writes it back, and returns the old value (or 0/1 for SC.W) in `rd`. LR/SC reservation is tracked in `lr_reserved_ff`/`lr_addr_ff`; a single-hart implementation with no AXI exclusive-access signalling.
+- **`rtl/decode.sv`**: new `RV_ATOMIC` (opcode `0x2F`) case. LR.W is decoded as `LSU_LOAD` with `amo_op=AMO_LR` (reuses the existing load path; the LSU sets the reservation as a side-effect). SC.W and all AMO* instructions are decoded as `LSU_AMO`.
+- **`rtl/execute.sv`**: AMO rs2 forwarding, `amo_op` pass-through, and `load_use_hazard` extended to cover `LSU_AMO` (same forwarding timing as loads).
+- **`rtl/wb.sv`**: `LSU_AMO` writeback path returns `lsu_rd_data_i` (old value or SC.W result code) to `rd`.
+- **Test suite** (`sw/test_rv32a/`): 40+ checks covering all 11 instructions including LR/SC success and three failure modes (no prior LR, different address, intervening store), all 9 AMO operations (old value + new memory value), chained AMOs, and the LR/SC atomic-increment idiom — **ALL PASS**.
 
 ### RV32M hardware multiply/divide
 

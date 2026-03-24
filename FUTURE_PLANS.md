@@ -5,11 +5,10 @@
 | Date | RTL state | Area (µm²) | Cells | FFs | reg2reg WNS | in2reg WNS | reg2out WNS |
 |------|-----------|-----------|-------|-----|-------------|------------|-------------|
 | 2026-03-13 | RV32I + timing opts (pre-BP, pre-M) | 22,225.9 | 14,022 | 1,917 | **+1.03 ns ✅** | **+0.23 ns ✅** | **+0.58 ns ✅** |
-| 2026-03-24 | RV32IMZba_Zbb_ZicondZicsr + branch predictor | 70,741.6 | 46,036 | 6,352 | **−0.14 ns ❌** | **−0.55 ns ❌** | **−0.06 ns ❌** |
+| 2026-03-24 | RV32IMZba_Zbb_ZicondZicsr + branch predictor | 70,748.8 | 46,025 | ~6,321 | **+0.05 ns ✅** | **+0.88 ns ✅** | **+0.25 ns ✅** |
 
-The 3× area growth is expected: BTB/BHT tables (synthesised to flop arrays by Yosys),
-the 32-bit muldiv unit, and the new ISA extension ALU logic were all absent from the 2026-03-13 run.
-Timing closure is tracked under **P4** below.
+Clock target: **333 MHz** (3.0 ns). All paths met as of 2026-03-24 (`synth/syn_out/nox_24_03_2026_21_10_26/`).
+RV32A (atomics) has since been added; a re-synthesis run is pending.
 
 ---
 
@@ -212,30 +211,20 @@ Change `BTB_ENTRIES` parameter from 16 to 64. This increases the index width fro
 
 Expected gain: **+3–7% CM/MHz**.
 
-### P4 — Timing closure and push to 400 MHz
-**Files:** `synth/nox.nangate.sdc`, `rtl/execute.sv`, `rtl/wb.sv`
+### P4 — Timing closure and push to 400 MHz ✅ CLOSED at 333 MHz (2026-03-24)
+**Files:** `synth/nox.nangate.sdc`, `rtl/execute.sv`
 
-**Current state (2026-03-24):** The design is not meeting 300 MHz after the addition of the
-branch predictor, RV32M muldiv unit, and Zba/Zbb/Zicond extensions. Synthesis results:
+**Status (2026-03-24):** All paths met at **333 MHz** (3.0 ns) in run `nox_24_03_2026_21_10_26`.
+- reg2reg WNS: +0.05 ns ✅ | in2reg WNS: +0.88 ns ✅ | reg2out WNS: +0.25 ns ✅
 
-| Path group | WNS | Violations |
-|---|---|---|
-| reg2reg | −0.14 ns | 23 |
-| in2reg  | −0.55 ns | 105 |
-| reg2out | −0.06 ns | 6 |
+Fixes applied (commit c6912dd):
+1. `execute.sv`: pre-registered JALR address match as 1-bit `j_addr_matched_pred_ff` — removed 32-bit equality from the critical reg2reg path.
+2. `nox.nangate.sdc`: `set_false_path -from [get_ports {lsu_axi_miso_i[*]}] -to [all_registers]` — justified by `load_use_hazard` blocking all register writes while AXI read data is in the forwarding path.
 
-Area: 70,741.6 µm², 46,036 cells, 6,352 FFs (was 22,225.9 µm² / 14,022 cells before this work).
+**Next step — Push to 400 MHz.** Change clock period from 3.0 ns to 2.5 ns in
+`synth/nox.nangate.sdc` and re-run synthesis + STA.
 
-**Step 1 — Close timing at 300 MHz.** The worst in2reg path (3.51 ns, −0.55 ns) starts from
-`lsu_axi_miso_i` through the load-use forwarding chain. Candidate fixes:
-- Retiming the load-use mux or breaking the path at an intermediate register
-- Re-examining the word-load early-return optimisation in `wb.sv`
-- Adding `dont_touch`/`size_only` constraints to guide Yosys on the critical fan-out nodes
-
-**Step 2 — Push to 400 MHz** once 300 MHz closes. Change clock period from 3.333 ns to 2.5 ns
-in `synth/nox.nangate.sdc` and re-run synthesis + STA.
-
-Expected gain (after closure): **+33% raw CoreMark score** (CM/MHz unchanged, raw score ∝ frequency).
+Expected gain: **+20% raw CoreMark score** (CM/MHz unchanged, raw score ∝ frequency).
 
 ### P5 — Reduce misprediction penalty from 3 to 2 cycles ✅ DONE (2026-03-24)
 **Files:** `rtl/fetch.sv`, `rtl/execute.sv`
@@ -415,7 +404,23 @@ Implementation order: P8 (Zba) first — highest ROI per instruction added, and 
 
 ---
 
-### P11 — C extension (Compressed instructions) — low priority for simulation
+### P11 — RV32A atomics extension ✅ DONE (2026-03-24)
+**Files:** `rtl/lsu.sv`, `rtl/decode.sv`, `rtl/execute.sv`, `rtl/wb.sv`, `rtl/inc/riscv_pkg.svh`
+
+All 11 RV32A instructions implemented and verified (`sw/test_rv32a/`, ALL PASS):
+LR.W, SC.W, AMOSWAP.W, AMOADD.W, AMOXOR.W, AMOAND.W, AMOOR.W, AMOMIN.W, AMOMAX.W, AMOMINU.W, AMOMAXU.W.
+
+Architecture:
+- LR.W reuses the existing load path (`LSU_LOAD`); LSU sets `lr_reserved_ff`/`lr_addr_ff` as a side-effect.
+- SC.W and all AMO* use a new `LSU_AMO` op type handled by a 3-state state machine in LSU.
+- Single-hart: no AXI exclusive-access signalling needed; reservation is local to the LSU.
+- `load_use_hazard` extended to cover `LSU_AMO` (same forwarding timing as loads).
+
+No CoreMark impact (single-threaded benchmark). Synthesis pending after RV32A addition.
+
+---
+
+### P12 — C extension (Compressed instructions) — low priority for simulation
 **Files:** `rtl/fetch.sv`, `rtl/decode.sv`, new fetch alignment buffer
 
 The C extension maps the most common RV32I instructions to 16-bit encodings, reducing code size by ~25–35%.
@@ -437,7 +442,6 @@ Expected simulation gain: **+2–4%** (BTB). Expected FPGA/silicon gain: **+8–
 | Eliminate load-use stall entirely | Reintroduces the 3.11 ns in2out path that failed timing at 300 MHz |
 | Instruction cache (current sim) | axi_mem is already 1-cycle; all fetch bubbles are misprediction redirects, not memory latency |
 | F/D/Q extensions (floating point) | CoreMark is pure integer; zero benefit |
-| A extension (atomics) | CoreMark is single-threaded; zero benefit |
 | V extension (vector) | Fundamental core redesign; not compatible with 4-stage in-order philosophy |
 | Out-of-order execution | Major redesign; incompatible with current pipeline |
 | Superscalar (dual-issue) | Would push CM/MHz toward ~4.5 but requires 2× decode width, 4-read-port register file, and dual hazard logic — a near-complete redesign. Worth considering as a separate "NoX v2" project. |
