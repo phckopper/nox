@@ -1,5 +1,18 @@
 # NOX RISC-V Core — Future Improvement Plans
 
+## Synthesis History (NanGate 45nm, Yosys + OpenSTA)
+
+| Date | RTL state | Area (µm²) | Cells | FFs | reg2reg WNS | in2reg WNS | reg2out WNS |
+|------|-----------|-----------|-------|-----|-------------|------------|-------------|
+| 2026-03-13 | RV32I + timing opts (pre-BP, pre-M) | 22,225.9 | 14,022 | 1,917 | **+1.03 ns ✅** | **+0.23 ns ✅** | **+0.58 ns ✅** |
+| 2026-03-24 | RV32IMZba_Zbb_ZicondZicsr + branch predictor | 70,741.6 | 46,036 | 6,352 | **−0.14 ns ❌** | **−0.55 ns ❌** | **−0.06 ns ❌** |
+
+The 3× area growth is expected: BTB/BHT tables (synthesised to flop arrays by Yosys),
+the 32-bit muldiv unit, and the new ISA extension ALU logic were all absent from the 2026-03-13 run.
+Timing closure is tracked under **P4** below.
+
+---
+
 ## Performance History
 
 ### Baseline (2026-03-23) — no branch predictor improvements
@@ -153,17 +166,19 @@ redirect penalty itself is the main lever.
 An instruction cache does **not** help here — the testbench memory is already 1-cycle,
 so all fetch bubbles are structural (misprediction drain), not memory-latency driven.
 
-### 5. Clock frequency — zero RTL change required
-Synthesis shows **+1.03 ns WNS** at 300 MHz (reg-to-reg critical path ≈ 2.30 ns).
-The design can realistically be pushed to **~400–430 MHz** by tightening the SDC
-constraint and re-running synthesis. CoreMark/MHz stays constant, but raw CoreMark score
-scales linearly with frequency.
+### 5. Timing closure — currently failing at 300 MHz
+The latest synthesis run (2026-03-24, with branch predictor + RV32M + Zba/Zbb/Zicond) shows
+timing violations: **WNS −0.55 ns in2reg**, −0.14 ns reg2reg, −0.06 ns reg2out.
+The design area also grew ~3× (22K → 70K µm²) due to BTB/BHT flop arrays, the muldiv unit,
+and the new ALU instructions being synthesised for the first time together.
 
-| Clock     | CoreMark/MHz | Raw CoreMark (est.) |
-|-----------|-------------|---------------------|
-| 300 MHz   | 0.909       | ~109                |
-| 400 MHz   | 0.909       | ~146                |
-| 430 MHz   | 0.909       | ~157                |
+The critical in2reg path (arrival 3.51 ns, budget 2.96 ns) starts from `lsu_axi_miso_i`
+and traces through the same load-use ALU chain as the previous in2out violation, but now
+terminates at a pipeline register rather than an output port. Fixing this requires either:
+- (a) re-examining the load-use forwarding chain for retiming opportunities, or
+- (b) accepting 258–288 MHz as the achievable frequency until optimisations are applied.
+
+Once timing is met at 300 MHz, pushing to 400 MHz remains a viable next step (see P4 below).
 
 ---
 
@@ -197,15 +212,30 @@ Change `BTB_ENTRIES` parameter from 16 to 64. This increases the index width fro
 
 Expected gain: **+3–7% CM/MHz**.
 
-### P4 — Push clock frequency to 400 MHz
-**File:** `synth/nox.nangate.sdc`
+### P4 — Timing closure and push to 400 MHz
+**Files:** `synth/nox.nangate.sdc`, `rtl/execute.sv`, `rtl/wb.sv`
 
-Change the clock period constraint from 3.333 ns to 2.5 ns (400 MHz) and re-run
-synthesis + STA. With +1.03 ns margin at 300 MHz the design should close at 400 MHz
-with the existing RTL. If timing is tight, the in2reg path (+0.23 ns margin) may need
-attention first.
+**Current state (2026-03-24):** The design is not meeting 300 MHz after the addition of the
+branch predictor, RV32M muldiv unit, and Zba/Zbb/Zicond extensions. Synthesis results:
 
-Expected gain: **+33% raw CoreMark score** (CM/MHz unchanged).
+| Path group | WNS | Violations |
+|---|---|---|
+| reg2reg | −0.14 ns | 23 |
+| in2reg  | −0.55 ns | 105 |
+| reg2out | −0.06 ns | 6 |
+
+Area: 70,741.6 µm², 46,036 cells, 6,352 FFs (was 22,225.9 µm² / 14,022 cells before this work).
+
+**Step 1 — Close timing at 300 MHz.** The worst in2reg path (3.51 ns, −0.55 ns) starts from
+`lsu_axi_miso_i` through the load-use forwarding chain. Candidate fixes:
+- Retiming the load-use mux or breaking the path at an intermediate register
+- Re-examining the word-load early-return optimisation in `wb.sv`
+- Adding `dont_touch`/`size_only` constraints to guide Yosys on the critical fan-out nodes
+
+**Step 2 — Push to 400 MHz** once 300 MHz closes. Change clock period from 3.333 ns to 2.5 ns
+in `synth/nox.nangate.sdc` and re-run synthesis + STA.
+
+Expected gain (after closure): **+33% raw CoreMark score** (CM/MHz unchanged, raw score ∝ frequency).
 
 ### P5 — Reduce misprediction penalty from 3 to 2 cycles ✅ DONE (2026-03-24)
 **Files:** `rtl/fetch.sv`, `rtl/execute.sv`

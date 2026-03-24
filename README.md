@@ -243,20 +243,30 @@ Adapting the setup to [Ibex Core - low risc](https://github.com/lowRISC/ibex/tre
 ```bash
 docker run  -v .:/test -w /test --rm aignacio/oss_cad_suite:latest bash -c "cd /test/synth && ./syn_yosys.sh"
 ```
+Output lands in a timestamped directory under `synth/syn_out/`.
 
-### Area results (NanGate 45nm, current RV32IM core):
-* 22225.9 µm², 14022 cells, ~1917 FFs @ 300 MHz (Yosys + OpenSTA, all timing paths met, WNS +1.03 ns reg2reg)
+### Area & Timing results (NanGate 45nm, 2026-03-24, RV32IMZba_Zbb_ZicondZicsr + branch predictor):
+
+| Metric | Value |
+|---|---|
+| Chip area | 70,741.6 µm² |
+| Total cells | 46,036 |
+| Flip-flops | 6,352 |
+
+| Path group | WNS | Status |
+|---|---|---|
+| reg2reg | −0.14 ns | ❌ 23 violations |
+| in2reg  | −0.55 ns | ❌ 105 violations |
+| reg2out | −0.06 ns | ❌ 6 violations |
+| in2out  | (false path) | ✅ no paths |
+
+> **Note:** The design does not currently meet the 300 MHz target. The area and FF count grew ~3× vs the previous synthesis due to the branch predictor's BTB/BHT tables, the RV32M multiply/divide unit, and the new ISA extensions — all synthesised since the last passing run. A timing closure plan is tracked in [FUTURE_PLANS.md](FUTURE_PLANS.md) (see **P4 — Timing Closure**) and will be addressed in an upcoming update.
+
+Previous passing result (pre-branch-predictor, pre-RV32M, RV32I core):
+* 22,225.9 µm², 14,022 cells, ~1,917 FFs — WNS **+1.03 ns** reg2reg (all paths met @ 300 MHz)
 
 Original RV32I baseline (pre-AI-improvements):
 * 27.04 kGE @ 250MHz in 45nm
-
-```bash
-...
-End of script. Logfile hash: 39230763f8, CPU: user 15.51s system 0.15s, MEM: 175.05 MB peak
-Yosys 0.40+25 (git sha1 171577f90, clang++ 14.0.0-1ubuntu1.1 -fPIC -Os)
-Time spent: 72% 2416x select (5 sec), 22% 2x read_verilog (1 sec), ...
-Area in kGE =  27.04
-```
 
 ## AI improvements
 
