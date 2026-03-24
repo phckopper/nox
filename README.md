@@ -19,10 +19,10 @@
 ## <a name="intro"></a> Introduction
 NoX is a 32-bit RISC-V core designed in System Verilog language aiming both `FPGA` and `ASIC` flows. The core was projected to be easily integrated and simulated as part of an SoC, with `makefile` targets for simple standalone simulation or with an interconnect and peripherals. In short, the core specs are listed here:
 
-- RV32IMZicsr
+- RV32IMZba_Zbb_ZicondZicsr
 - 4 stages / single-issue / in-order pipeline
 - M-mode privileged spec.
-- 2.48 CoreMark/MHz (simulation, NanGate 45nm @ 300 MHz, -O2)
+- 2.74 CoreMark/MHz (simulation, NanGate 45nm @ 300 MHz, -O2, RV32IM + Zba/Zbb/Zicond)
 - Software/External/Timer interrupt
 - Support non/vectored IRQs
 - Configurable fetch FIFO size
@@ -196,38 +196,36 @@ make run_comp
 Once it is finished, you can open the report file available at **riscof_compliance/riscof_work/report.html** to check the status. The run should finished with a similar report like the one available at [docs/report_compliance.html](docs/report_compliance.html).
 
 ## <a name="coremark"></a> CoreMark
-Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **2.479 CoreMark/MHz** (simulation, NanGate 45nm @ 300 MHz, RV32IM -O2), verified with "Correct operation validated."
+Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **2.739 CoreMark/MHz** (simulation, NanGate 45nm @ 300 MHz, RV32IM + Zba/Zbb/Zicond, -O2), verified with "Correct operation validated."
 
 To build and run the CoreMark benchmark using the Verilator simulator:
 ```bash
-# Build the simulator with RV32IM support
-make build_sim_m  # produces output_verilator_m/nox_sim_m
+# Build the simulator
+make all WAVEFORM_USE=1 OUT_VERILATOR=output_verilator_m
 
-# Build the CoreMark ELF (requires Docker)
-cd sw/coremark
-docker run --rm -v $(pwd):/nox_files -w /nox_files aignacio/nox \
-  make PORT_DIR=nox ITERATIONS=1500 \
-       XCFLAGS="-O2 -DPERFORMANCE_RUN=1 -DUART_SIM" \
-       UART_MODE=UART_SIM "RUN_CMD=riscv-none-embed-" "RUN_PY=python3"
+# Build the CoreMark ELF with Zba/Zbb/Zicond (requires xPack GCC 15+)
+GCC15=/path/to/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none-elf-
+make -C sw/coremark PORT_DIR=nox ITERATIONS=1500 \
+  XCFLAGS="-O2 -DPERFORMANCE_RUN=1 -DUART_SIM -march=rv32im_zba_zbb_zicond_zicsr -mabi=ilp32" \
+  UART_MODE=UART_SIM "RUN_CMD=$GCC15" "RUN_PY=python3"
 
 # Run the simulation (≥1500 iterations needed for valid ≥10s result at 50 MHz CLOCKS_PER_SEC)
-cd ../..
-./output_verilator_m/nox_sim_m -s 750000000 -e sw/coremark/coremark.elf -w 900000000
+./output_verilator_m/nox_sim -s 650000000 -e sw/coremark/coremark.elf -w 900000000
 ```
 
-**Performance run output (simulation):**
-```bash
+**Performance run output (simulation, GCC 15.2.0, Zba+Zbb+Zicond):**
+```
  -----------
  [NoX] Coremark Start
  -----------
 2K performance run parameters for coremark.
 CoreMark Size    : 666
-Total ticks      : 605144165
-Total time (secs): 12
-Iterations/Sec   : 125
+Total ticks      : 547698287
+Total time (secs): 10
+Iterations/Sec   : 150
 Iterations       : 1500
-Compiler version : riscv-none-embed-gcc (xPack GNU RISC-V Embedded GCC x86_64) 10.2.0
-Compiler flags   : -O0 -g -march=rv32im -mabi=ilp32 -Wall -Wno-unused -ffreestanding --specs=nano.specs -DPRINTF_DISABLE_SUPPORT_FLOAT -DPRINTF_DISABLE_SUPPORT_EXPONENTIAL -DPRINTF_DISABLE_SUPPORT_LONG_LONG -DUART_SIM -Wall -Wno-main -O2 -DPERFORMANCE_RUN=1
+Compiler version : riscv-none-elf-gcc (xPack GNU RISC-V Embedded GCC x86_64) 15.2.0
+Compiler flags   : -O2 -DPERFORMANCE_RUN=1 -DUART_SIM -march=rv32im_zba_zbb_zicond_zicsr -mabi=ilp32
 Memory location  : STACK
 seedcrc          : 0xe9f5
 [0]crclist       : 0xe714
@@ -237,7 +235,7 @@ seedcrc          : 0xe9f5
 Correct operation validated. See README.md for run and reporting rules.
 ```
 
-CoreMark/MHz = 1,500,000,000 / 605,144,165 = **2.479 CM/MHz** at 300 MHz.
+CoreMark/MHz = 1,500 × 50,000,000 / 547,698,287 = **2.739 CM/MHz** at 300 MHz (+10.5% vs RV32IM baseline of 2.479).
 
 ## <a name="synth"></a> Synthesis
 

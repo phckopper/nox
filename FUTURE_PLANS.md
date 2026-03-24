@@ -66,7 +66,30 @@ Load-use stalls rose from 1.4% → 3.9% of cycles. With hardware multiply the co
 inner loops no longer spend the bulk of their time in `__mulsi3`; the remaining code is
 memory-intensive (matrix/list operations), so load-use stalls are proportionally more visible.
 
-**Next target: P8+P9+P10 RTL implemented and functionally verified (2026-03-24). GCC 12+ needed for benchmarking; see notes in P8/P9/P10 sections.**
+**Next target: P8+P9+P10 complete — see results below.**
+
+### After P8+P9+P10 (2026-03-24) — Zba + Zbb-subset + Zicond extensions
+- **CoreMark/MHz: 2.739** (+10.5% vs P7, +200.9% vs baseline), crcfinal=0x25b5 ✓
+- **Cycles/iteration: 365,132** (down from 403,429 at rv32im -O2)
+- Total ticks: 547,698,287 (1500 iterations) → **10.95s ≥ 10s** EEMBC check ✓
+- "Correct operation validated." — VALID EEMBC score
+- Built with GCC 15.2.0 (`-march=rv32im_zba_zbb_zicond_zicsr -O2`); 97 extension instructions used
+  (sh2add×29, sh1add×26, sext.h×16, zext.h×15, czero.eqz×3, czero.nez×3, max×3, sh3add×1, minu×1)
+
+#### P8+P9+P10 stall breakdown (650M cycle window, 1500-iter run):
+| Source | Count | Est. cycles lost |
+|--------|-------|-----------------|
+| Fetch bubbles (total) | 53.6M cycles | **8.2%** of all cycles |
+| — Branch mispredictions | 7.7M events × ~2 cyc | ~15.4M (**−37% vs P7**) |
+| — JAL BTB misses | 0.84M events × ~2 cyc | ~1.7M (**−63% vs P7**) |
+| — JALR redirects | 0.57M events × ~2 cyc | ~1.1M |
+| Load-use stalls | 31.0M cycles | **4.8%** |
+
+Branch mispredictions dropped from 12.3M → 7.7M (−37%) thanks to czero.eqz/czero.nez replacing
+data-dependent branches in list sort and state transition hot paths. JAL BTB misses fell by 63%
+due to smaller, more concentrated code (fewer unique call sites). Fetch bubbles: 10.8% → 8.2%.
+
+**Next target: P4 (push clock to 400 MHz, +33% raw score) or further BTB/predictor improvements.**
 
 ---
 
@@ -355,7 +378,8 @@ Enabling all three together with `-march=rv32im_zba_zbb_zicond` allows GCC to co
 
 **Status (2026-03-24):** All 15 instructions (3 Zba + 10 Zbb + 2 Zicond) implemented in RTL and fully verified via `sw/test_zba_zbb_zicond/` (55 test cases, ALL PASS). A critical decode-stage bug was fixed: for OP-IMM instructions (ADDI/SLTI/XORI/ORI/ANDI), the upper immediate bits were incorrectly forwarded as `funct7_raw`, causing false extension dispatch for common immediates (e.g. `ORI rs, 0xA5` → treated as `max`). Fix: `funct7_raw` is only captured for OP-IMM shift instructions (funct3=SLL/SRL_SRA).
 
-**Benchmarking blocked on GCC 12+.** GCC 10.2 (xPack RISC-V GCC 10.2.0) does not generate any Zba/Zbb/Zicond instructions from C; it only knows `zext.b` as an alias for `andi rd,rs,0xFF`. To realize the expected gain, recompile CoreMark with GCC 12+ and `-march=rv32im_zba_zbb_zicond -O2`.
+**Result (2026-03-24): +10.5% CM/MHz (2.479 → 2.739), 547,698,287 ticks, crcfinal=0x25b5 ✓.**
+Built with GCC 15.2.0 (`-march=rv32im_zba_zbb_zicond_zicsr -O2`). GCC 10.2 does not generate these instructions; use xPack riscv-none-elf-gcc 15+ (see `Dockerfile.nox` for updated build image).
 
 Implementation order: P8 (Zba) first — highest ROI per instruction added, and simplest ALU change. P9 (Zbb min/max subset) second. P10 (Zicond) third.
 
