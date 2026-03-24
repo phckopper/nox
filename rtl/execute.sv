@@ -177,17 +177,77 @@ module execute
       endcase
     end
 
-    // ALU compute
+    // ALU compute — base RV32IM + Zba / Zbb-subset / Zicond extensions
     case (id_ex_i.f3)
+      // funct3=000: ADD, SUB — no extension uses this funct3
       RV_F3_ADD_SUB:  res = (id_ex_i.f7 == RV_F7_1) ? op1 - op2 : op1 + op2;
-      RV_F3_SLT:      res = (signed'(op1) < signed'(op2)) ? 'd1 : 'd0;
-      RV_F3_SLTU:     res = (op1 < op2) ? 'd1 : 'd0;
-      RV_F3_XOR:      res = (op1 ^ op2);
-      RV_F3_OR:       res = (op1 | op2);
-      RV_F3_AND:      res = (op1 & op2);
-      RV_F3_SLL:      res = op1 << op2[4:0];
-      RV_F3_SRL_SRA:  res = (id_ex_i.rshift == RV_SRA) ? signed'((signed'(op1) >>> op2[4:0])) : (op1 >> op2[4:0]);
-      default:        res = 'd0;
+
+      // funct3=001 (SLL/SLLI): also sext.b (funct7=0110000,shamt=00100)
+      //                         and sext.h (funct7=0110000,shamt=00101)  [Zbb]
+      RV_F3_SLL: begin
+        if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0100)
+          res = {{24{op1[7]}},  op1[7:0]};       // sext.b
+        else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0101)
+          res = {{16{op1[15]}}, op1[15:0]};      // sext.h
+        else
+          res = op1 << op2[4:0];                 // SLL / SLLI
+      end
+
+      // funct3=010 (SLT): also sh1add (funct7=0010000)  [Zba]
+      RV_F3_SLT: begin
+        if (id_ex_i.funct7_raw == 7'b001_0000)
+          res = (op1 << 1) + op2;                // sh1add
+        else
+          res = (signed'(op1) < signed'(op2)) ? 'd1 : 'd0;  // SLT
+      end
+
+      // funct3=011 (SLTU): no extension uses this funct3
+      RV_F3_SLTU:  res = (op1 < op2) ? 'd1 : 'd0;
+
+      // funct3=100 (XOR): sh2add (0010000), min (0000101), xnor (0100000),
+      //                    zext.h (0000100)  [Zba/Zbb]
+      RV_F3_XOR: begin
+        case (id_ex_i.funct7_raw)
+          7'b001_0000: res = (op1 << 2) + op2;              // sh2add  [Zba]
+          7'b000_0101: res = ($signed(op1) < $signed(op2)) ? op1 : op2; // min [Zbb]
+          7'b010_0000: res = ~(op1 ^ op2);                  // xnor   [Zbb]
+          7'b000_0100: res = {16'b0, op1[15:0]};            // zext.h [Zbb]
+          default:     res = op1 ^ op2;                     // XOR
+        endcase
+      end
+
+      // funct3=101 (SRL/SRA): minu (0000101), czero.eqz (0000111)  [Zbb/Zicond]
+      RV_F3_SRL_SRA: begin
+        case (id_ex_i.funct7_raw)
+          7'b000_0101: res = (op1 < op2) ? op1 : op2;       // minu   [Zbb]
+          7'b000_0111: res = (op2 == '0) ? '0 : op1;        // czero.eqz [Zicond]
+          default:     res = (id_ex_i.rshift == RV_SRA) ?
+                             signed'((signed'(op1) >>> op2[4:0])) :
+                             (op1 >> op2[4:0]);              // SRL/SRA
+        endcase
+      end
+
+      // funct3=110 (OR): sh3add (0010000), max (0000101), orn (0100000)  [Zba/Zbb]
+      RV_F3_OR: begin
+        case (id_ex_i.funct7_raw)
+          7'b001_0000: res = (op1 << 3) + op2;              // sh3add  [Zba]
+          7'b000_0101: res = ($signed(op1) > $signed(op2)) ? op1 : op2; // max [Zbb]
+          7'b010_0000: res = op1 | ~op2;                    // orn     [Zbb]
+          default:     res = op1 | op2;                     // OR
+        endcase
+      end
+
+      // funct3=111 (AND): maxu (0000101), andn (0100000), czero.nez (0000111)  [Zbb/Zicond]
+      RV_F3_AND: begin
+        case (id_ex_i.funct7_raw)
+          7'b000_0101: res = (op1 > op2) ? op1 : op2;       // maxu   [Zbb]
+          7'b010_0000: res = op1 & ~op2;                    // andn   [Zbb]
+          7'b000_0111: res = (op2 != '0) ? '0 : op1;        // czero.nez [Zicond]
+          default:     res = op1 & op2;                     // AND
+        endcase
+      end
+
+      default: res = 'd0;
     endcase
 
     next_ex_mem_wb.result  = (id_ex_i.jump) ? alu_t'(id_ex_i.pc_dec+'d4) : res;

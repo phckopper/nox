@@ -66,7 +66,7 @@ Load-use stalls rose from 1.4% → 3.9% of cycles. With hardware multiply the co
 inner loops no longer spend the bulk of their time in `__mulsi3`; the remaining code is
 memory-intensive (matrix/list operations), so load-use stalls are proportionally more visible.
 
-**Remaining high-value opportunities: P8 (Zba+Zbb+Zicond bit-manipulation extensions, +6–12%) or P4 (push to 400 MHz, +33% raw score)**
+**Next target: P8+P9+P10 RTL implemented and functionally verified (2026-03-24). GCC 12+ needed for benchmarking; see notes in P8/P9/P10 sections.**
 
 ---
 
@@ -272,7 +272,7 @@ If added: a small direct-mapped cache (1–2 KB, 4-word lines) is sufficient for
 CoreMark's working set. This is a significant addition requiring tag/valid arrays,
 line-fill logic, and a miss-stall mechanism in fetch.
 
-### P8 — Zba: address-generation bit-manipulation extension
+### P8 — Zba: address-generation bit-manipulation extension ✅ DONE (2026-03-24)
 **Files:** `rtl/execute.sv`, `rtl/decode.sv`, `rtl/inc/riscv_pkg.svh`
 
 Zba adds three R-type instructions: `sh1add` (rd = rs1<<1 + rs2), `sh2add` (rd = rs1<<2 + rs2), `sh3add` (rd = rs1<<3 + rs2). All share funct7=`0010000`, opcode=OP (unallocated in RV32IM), distinguished by funct3=010/100/110.
@@ -288,9 +288,11 @@ Without Zba, each stride-4 index requires `slli + add` (2 instructions). With `s
 
 Expected gain: **+4–8% CM/MHz** (2.479 → ~2.60–2.68)
 
+**Implementation status:** RTL complete. All 3 instructions (sh1add/sh2add/sh3add) verified via functional test (`sw/test_zba_zbb_zicond/`). GCC 10.2 does not auto-generate Zba instructions — benchmarking requires GCC 12+ (`-march=rv32im_zba`). When available, expected to realize the gain above.
+
 ---
 
-### P9 — Zbb: basic bit-manipulation subset (min/max/sext)
+### P9 — Zbb: basic bit-manipulation subset (min/max/sext/logical) ✅ DONE (2026-03-24)
 **Files:** `rtl/execute.sv`, `rtl/decode.sv`
 
 Prioritised subset of Zbb (full Zbb has 30+ ops; only the high-value ones for CoreMark):
@@ -317,9 +319,11 @@ GCC flag: `-march=rv32im_zbb` (or `_zbb_zba` combined).
 
 Expected gain: **+3–6% CM/MHz** (2.479 → ~2.55–2.63)
 
+**Implementation status:** RTL complete. All 10 Zbb instructions (min/max/minu/maxu/andn/orn/xnor/sext.b/sext.h/zext.h) verified via functional test. GCC 10.2 only generates `zext.b` (= `andi rd,rs,0xFF`) with `-march=rv32im_zba_zbb`; full Zbb codegen requires GCC 12+.
+
 ---
 
-### P10 — Zicond: integer conditional operations
+### P10 — Zicond: integer conditional operations ✅ DONE (2026-03-24)
 **Files:** `rtl/execute.sv`, `rtl/decode.sv`
 
 Adds two R-type instructions:
@@ -342,10 +346,16 @@ GCC uses Zicond automatically with `-march=rv32im_zicond -O2` for eligible if-th
 
 Expected gain: **+3–5% CM/MHz** (2.479 → ~2.55–2.60). Depends on how many unpredictable branches GCC converts to czero sequences.
 
+**Implementation status:** RTL complete. Both instructions (czero.eqz/czero.nez) verified via functional test. GCC 10.2 does not support `-march=rv32im_zicond` at all; requires GCC 12+.
+
 ---
 
-### P8+P9+P10 combined — Zba + Zbb + Zicond package
-Enabling all three together with `-march=rv32imzba_zbb_zicond` allows GCC to co-optimize across them. Combined expected gain: **+8–15% CM/MHz** → ~2.68–2.85 CM/MHz. The upper bound approaches the theoretical stall-free ceiling of ~2.97.
+### P8+P9+P10 combined — Zba + Zbb + Zicond package ✅ RTL DONE (2026-03-24)
+Enabling all three together with `-march=rv32im_zba_zbb_zicond` allows GCC to co-optimize across them. Combined expected gain: **+8–15% CM/MHz** → ~2.68–2.85 CM/MHz. The upper bound approaches the theoretical stall-free ceiling of ~2.97.
+
+**Status (2026-03-24):** All 15 instructions (3 Zba + 10 Zbb + 2 Zicond) implemented in RTL and fully verified via `sw/test_zba_zbb_zicond/` (55 test cases, ALL PASS). A critical decode-stage bug was fixed: for OP-IMM instructions (ADDI/SLTI/XORI/ORI/ANDI), the upper immediate bits were incorrectly forwarded as `funct7_raw`, causing false extension dispatch for common immediates (e.g. `ORI rs, 0xA5` → treated as `max`). Fix: `funct7_raw` is only captured for OP-IMM shift instructions (funct3=SLL/SRL_SRA).
+
+**Benchmarking blocked on GCC 12+.** GCC 10.2 (xPack RISC-V GCC 10.2.0) does not generate any Zba/Zbb/Zicond instructions from C; it only knows `zext.b` as an alias for `andi rd,rs,0xFF`. To realize the expected gain, recompile CoreMark with GCC 12+ and `-march=rv32im_zba_zbb_zicond -O2`.
 
 Implementation order: P8 (Zba) first — highest ROI per instruction added, and simplest ALU change. P9 (Zbb min/max subset) second. P10 (Zicond) third.
 

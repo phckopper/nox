@@ -89,6 +89,12 @@ module decode
         next_id_ex.imm    = gen_imm(fetch_instr_i, I_IMM);
         next_id_ex.rshift = instr_dec[30] ? RV_SRA : RV_SRL;
         next_id_ex.we_rd  = 1'b1;
+        // Only propagate funct7_raw for shift instructions (funct3=001 SLL, funct3=101 SRL/SRA).
+        // For ADDI/SLTI/XORI/ORI/ANDI the upper immediate bits must NOT trigger
+        // extension dispatch in execute (their imm[11:5] could alias extension encodings).
+        // sext.b/sext.h are OP_IMM+SLL with funct7=0110000 — captured here correctly.
+        if (instr_dec.f3 == RV_F3_SLL || instr_dec.f3 == RV_F3_SRL_SRA)
+          next_id_ex.funct7_raw = fetch_instr_i[31:25];
       end
       RV_LUI: begin
         next_id_ex.f3     = RV_F3_ADD_SUB;
@@ -105,17 +111,26 @@ module decode
         next_id_ex.we_rd  = 1'b1;
       end
       RV_OP: begin
-        next_id_ex.f3     = instr_dec.f3;
-        next_id_ex.rs1_op = REG_RF;
-        next_id_ex.rs2_op = REG_RF;
-        next_id_ex.we_rd  = 1'b1;
-        if (fetch_instr_i[31:25] == 7'b000_0001) begin
-          // P7: RV32M — MUL/DIV/REM (funct7=0000001)
-          next_id_ex.is_muldiv = 1'b1;
-        end else begin
-          next_id_ex.f7     = instr_dec[30] ? RV_F7_1 : RV_F7_0;
-          next_id_ex.rshift = instr_dec[30] ? RV_SRA : RV_SRL;
-        end
+        next_id_ex.f3         = instr_dec.f3;
+        next_id_ex.funct7_raw = fetch_instr_i[31:25];
+        next_id_ex.rs1_op     = REG_RF;
+        next_id_ex.rs2_op     = REG_RF;
+        next_id_ex.we_rd      = 1'b1;
+        case (fetch_instr_i[31:25])
+          7'b000_0001: begin                         // P7: RV32M (funct7=0000001)
+            next_id_ex.is_muldiv = 1'b1;
+          end
+          7'b010_0000: begin                         // SUB/SRA (base I) + Zbb andn/orn/xnor
+            next_id_ex.f7     = RV_F7_1;
+            next_id_ex.rshift = RV_SRA;
+          end
+          // Zba (0010000), Zbb min/max (0000101), Zbb zext.h (0000100),
+          // Zicond (0000111): funct7_raw already captured; execute handles dispatch
+          default: begin                             // funct7=0000000: ADD/SLT/SLL/XOR/OR/AND/SRL
+            next_id_ex.f7     = RV_F7_0;
+            next_id_ex.rshift = RV_SRL;
+          end
+        endcase
       end
       RV_JAL: begin
         next_id_ex.jump   = 1'b1;

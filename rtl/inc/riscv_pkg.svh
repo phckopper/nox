@@ -222,6 +222,8 @@
     pc_t          bp_predict_target;
     // P7: RV32M extension — instruction is a MUL/DIV/REM from funct7=0000001
     logic         is_muldiv;
+    // P8-P10: raw funct7 bits for Zba/Zbb/Zicond dispatch in execute
+    logic [6:0]   funct7_raw;
   } s_id_ex_t;
 
   typedef struct packed {
