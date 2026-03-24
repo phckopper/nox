@@ -71,10 +71,14 @@ module execute
   logic         bp_taken_for_branch_ff, next_bp_taken_for_branch;
   logic         bp_taken_for_jump_ff, next_bp_taken_for_jump;
   logic         is_jal_for_jump_ff, next_is_jal_for_jump;
-  // P2: predicted target and call/return register operand addresses
-  pc_t          bp_predict_target_for_jump_ff, next_bp_predict_target_for_jump;
+  // P2: call/return register operand addresses
   raddr_t       rd_addr_for_jump_ff,  next_rd_addr_for_jump;
   raddr_t       rs1_addr_for_jump_ff, next_rs1_addr_for_jump;
+  // Pre-registered flag: did the resolved JALR address match the BTB/RAS prediction?
+  // Computed when next_jump.j_act fires (non-critical path), then stored so that
+  // correct_jump_pred no longer needs the slow 32-bit combinational equality from
+  // jump_ff.j_addr, eliminating the reg2reg / reg2out timing violations.
+  logic         j_addr_matched_pred_ff, next_j_addr_matched_pred;
   // Correct-prediction wires (combinational, used in both alu_proc and fetch_req)
   logic         correct_branch_pred;
   logic         correct_jump_pred;
@@ -103,8 +107,7 @@ module execute
   // predicted JALR: when the BTB/RAS predicted the exact same target that
   // execute resolved, the pipeline is already on the right path.
   assign correct_jump_pred   = jump_ff.j_act && bp_taken_for_jump_ff &&
-                               (is_jal_for_jump_ff ||
-                                jump_ff.j_addr == bp_predict_target_for_jump_ff);
+                               (is_jal_for_jump_ff || j_addr_matched_pred_ff);
 
   function automatic branch_dec(branch_t op, rdata_t rs1, rdata_t rs2);
     logic         take_branch;
@@ -360,10 +363,14 @@ module execute
     next_bp_taken_for_branch       = next_branch.b_act ? id_ex_i.bp_taken         : bp_taken_for_branch_ff;
     next_bp_taken_for_jump         = next_jump.j_act   ? id_ex_i.bp_taken         : bp_taken_for_jump_ff;
     next_is_jal_for_jump           = next_jump.j_act   ? (id_ex_i.rs1_op == PC)   : is_jal_for_jump_ff;
-    // P2: predicted target and register addresses for call/return detection
-    next_bp_predict_target_for_jump = next_jump.j_act  ? id_ex_i.bp_predict_target : bp_predict_target_for_jump_ff;
-    next_rd_addr_for_jump           = next_jump.j_act  ? id_ex_i.rd_addr           : rd_addr_for_jump_ff;
-    next_rs1_addr_for_jump          = next_jump.j_act  ? id_ex_i.rs1_addr          : rs1_addr_for_jump_ff;
+    // P2: register addresses for call/return detection
+    next_rd_addr_for_jump    = next_jump.j_act ? id_ex_i.rd_addr  : rd_addr_for_jump_ff;
+    next_rs1_addr_for_jump   = next_jump.j_act ? id_ex_i.rs1_addr : rs1_addr_for_jump_ff;
+    // Pre-register JALR address match: compare when the jump fires (non-critical
+    // path from id_ex_ff), not combinationally from the registered jump_ff address.
+    next_j_addr_matched_pred = next_jump.j_act ?
+                               (next_jump.j_addr == id_ex_i.bp_predict_target) :
+                               j_addr_matched_pred_ff;
 
     fwd_wdata = (id_ex_i.lsu == LSU_STORE) &&
                 (ex_mem_wb_ff.we_rd) &&
@@ -483,7 +490,7 @@ module execute
       bp_taken_for_branch_ff       <= 1'b0;
       bp_taken_for_jump_ff         <= 1'b0;
       is_jal_for_jump_ff           <= 1'b0;
-      bp_predict_target_for_jump_ff <= pc_t'('0);
+      j_addr_matched_pred_ff       <= 1'b0;
       rd_addr_for_jump_ff          <= raddr_t'('0);
       rs1_addr_for_jump_ff         <= raddr_t'('0);
     end
@@ -496,7 +503,7 @@ module execute
       bp_taken_for_branch_ff       <= next_bp_taken_for_branch;
       bp_taken_for_jump_ff         <= next_bp_taken_for_jump;
       is_jal_for_jump_ff           <= next_is_jal_for_jump;
-      bp_predict_target_for_jump_ff <= next_bp_predict_target_for_jump;
+      j_addr_matched_pred_ff       <= next_j_addr_matched_pred;
       rd_addr_for_jump_ff          <= next_rd_addr_for_jump;
       rs1_addr_for_jump_ff         <= next_rs1_addr_for_jump;
     end
