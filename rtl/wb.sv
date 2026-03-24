@@ -68,6 +68,15 @@ module wb
       wb_dec_o.we_rd   = (lsu_bp_data_i || lock_wr_ff) ? 'b0 : ex_mem_wb_i.we_rd;
       wb_dec_o.rd_data = fmt_load(wb_lsu_i, lsu_rd_data_i);
     end
+
+    // P11: RV32A — AMO and SC results.
+    // The LSU state machine completes the operation before releasing lsu_bp, so
+    // lsu_rd_data_i already holds the correct result (old value for AMO*, 0/1 for SC).
+    // No data-phase back-pressure check needed: bp_data is never asserted for LSU_AMO.
+    if (wb_lsu_i.op_typ == LSU_AMO) begin
+      wb_dec_o.we_rd   = ex_mem_wb_i.we_rd;
+      wb_dec_o.rd_data = lsu_rd_data_i;  // mux in lsu.sv provides correct value
+    end
   end : mux_for_w_rf
 
   always_comb begin : bkp_load_for_fwd

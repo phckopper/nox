@@ -172,6 +172,26 @@ module decode
         next_id_ex.lsu_w   = lsu_w_t'(instr_dec.f3);
         next_id_ex.imm     = gen_imm(fetch_instr_i, S_IMM);
       end
+      // P11: RV32A — LR.W, SC.W, and AMO*
+      // All use R-type format: rd=dest, rs1=address (no offset), rs2=source operand.
+      // LR.W is decoded as LSU_LOAD (normal load path) with amo_op=AMO_LR so the
+      // LSU can set the reservation register on completion.
+      // SC.W and AMO* are decoded as LSU_AMO and handled by the LSU state machine.
+      RV_ATOMIC: begin
+        next_id_ex.f3     = RV_F3_ADD_SUB;  // addr = rs1 + 0
+        next_id_ex.rs1_op = REG_RF;          // op1 = rs1 (base address)
+        next_id_ex.rs2_op = ZERO;            // op2 = 0 (no offset; rs2 is AMO operand)
+        next_id_ex.lsu_w  = RV_LSU_W;        // RV32A: always word
+        next_id_ex.we_rd  = 1'b1;
+        next_id_ex.amo_op = amo_op_t'(fetch_instr_i[31:27]);
+        if (fetch_instr_i[31:27] == 5'b00010) begin
+          // LR.W: load with reservation — use normal LOAD path + amo_op tag
+          next_id_ex.lsu = LSU_LOAD;
+        end else begin
+          // SC.W and all AMO*: handled by LSU state machine
+          next_id_ex.lsu = LSU_AMO;
+        end
+      end
       RV_MISC_MEM: begin
         next_id_ex.f3     = RV_F3_ADD_SUB;
         next_id_ex.rs1_op = ZERO;

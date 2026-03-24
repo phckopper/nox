@@ -141,7 +141,9 @@ module execute
     // Stall for 1 cycle so the loaded value is read from the register file
     // (via bkp_load_ff write-through) rather than forwarded combinationally
     // from AXI rdata, eliminating the in2out timing violation.
-    load_use_hazard = (ex_mem_wb_ff.lsu == LSU_LOAD) &&
+    // LSU_AMO result is available when lsu_bp drops (state machine completes), same
+    // timing as LSU_LOAD, so treat it identically for the load-use hazard check.
+    load_use_hazard = (ex_mem_wb_ff.lsu == LSU_LOAD || ex_mem_wb_ff.lsu == LSU_AMO) &&
                       ~lsu_bp_i &&
                       (rs1_fwd == FWD_REG || rs2_fwd == FWD_REG);
   end : fwd_mux
@@ -372,7 +374,9 @@ module execute
                                (next_jump.j_addr == id_ex_i.bp_predict_target) :
                                j_addr_matched_pred_ff;
 
-    fwd_wdata = (id_ex_i.lsu == LSU_STORE) &&
+    // fwd_wdata: forward the WB result to rs2 when STORE/AMO needs updated data
+    // (LSU_AMO uses rs2 as the AMO operand — same forwarding need as STORE)
+    fwd_wdata = (id_ex_i.lsu == LSU_STORE || id_ex_i.lsu == LSU_AMO) &&
                 (ex_mem_wb_ff.we_rd) &&
                 (ex_mem_wb_ff.rd_addr == id_ex_i.rs2_addr) &&
                 (ex_mem_wb_ff.rd_addr != raddr_t'('h0));
@@ -382,6 +386,7 @@ module execute
     lsu_o.addr    = res;
     lsu_o.wdata   = rs2_data_i;
     lsu_o.pc_addr = id_ex_i.pc_dec;
+    lsu_o.amo_op  = id_ex_i.amo_op;
     if (fwd_wdata) begin
       // Lock means that we had a load but we had
       // to stall due to bp from the bus, thus we need

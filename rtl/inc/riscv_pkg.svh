@@ -83,8 +83,24 @@
   typedef enum logic [1:0] {
     NO_LSU,
     LSU_LOAD,
-    LSU_STORE
+    LSU_STORE,
+    LSU_AMO       // P11: RV32A — atomic read-modify-write (covers LR/SC/AMO*)
   } lsu_t;
+
+  // P11: RV32A — funct5 field for all atomic instructions
+  typedef enum logic [4:0] {
+    AMO_ADD   = 5'b00000,
+    AMO_SWAP  = 5'b00001,
+    AMO_LR    = 5'b00010,
+    AMO_SC    = 5'b00011,
+    AMO_XOR   = 5'b00100,
+    AMO_OR    = 5'b01000,
+    AMO_AND   = 5'b01100,
+    AMO_MIN   = 5'b10000,
+    AMO_MAX   = 5'b10100,
+    AMO_MINU  = 5'b11000,
+    AMO_MAXU  = 5'b11100
+  } amo_op_t;
 
   typedef enum logic {
     RV_SRL = 1'b0,
@@ -135,6 +151,7 @@
     RV_OP_IMM_32  = 'b00_110_11,
     RV_STORE      = 'b01_000_11,
     RV_custom_1   = 'b01_010_11,
+    RV_ATOMIC     = 'b01_011_11,  // P11: RV32A (opcode 0x2F)
     RV_OP         = 'b01_100_11,
     RV_LUI        = 'b01_101_11,
     RV_OP_32      = 'b01_110_11,
@@ -224,6 +241,8 @@
     logic         is_muldiv;
     // P8-P10: raw funct7 bits for Zba/Zbb/Zicond dispatch in execute
     logic [6:0]   funct7_raw;
+    // P11: RV32A — AMO operation type (funct5 from atomic instruction encoding)
+    amo_op_t      amo_op;
   } s_id_ex_t;
 
   typedef struct packed {
@@ -250,6 +269,7 @@
     lsu_addr_t  addr;
     rdata_t     wdata;
     pc_t        pc_addr; // We have to store the pc in case of LSU exception
+    amo_op_t    amo_op;  // P11: AMO operation (valid when op_typ==LSU_AMO)
   } s_lsu_op_t;
 
   typedef struct packed {
