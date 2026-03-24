@@ -47,6 +47,27 @@ Branch mispredictions remain the dominant bottleneck, but each now costs 2 cycle
 
 **Remaining high-value opportunities: P4 (push to 400 MHz, +33% raw score) or P5b (L0_BUFFER_SIZE 2→4)**
 
+### After P7 (2026-03-24) — RV32M hardware multiply/divide
+- **CoreMark/MHz: 2.479** (+141.9% vs P5, +172.7% vs baseline), crcfinal=0x25b5 ✓
+- **Cycles/iteration: 403,429** (down from 1,111,664 at rv32i -O2)
+- Total ticks: 605,144,165 (1500 iterations) → **12.10s ≥ 10s** EEMBC check ✓
+- "Correct operation validated." — VALID EEMBC score
+
+#### P7 stall breakdown (750M cycle window, 1500-iter run):
+| Source | Count | Est. cycles lost |
+|--------|-------|-----------------|
+| Fetch bubbles (total) | 70.1M cycles | **9.3%** of all cycles |
+| — Branch mispredictions | 12.3M events × ~2 cyc | ~24.7M |
+| — JAL BTB misses | 2.3M events × ~2 cyc | ~4.6M |
+| — JALR redirects | 0.77M events × ~2 cyc | ~1.5M |
+| Load-use stalls | 29.5M cycles | **3.9%** |
+
+Load-use stalls rose from 1.4% → 3.9% of cycles. With hardware multiply the coremark
+inner loops no longer spend the bulk of their time in `__mulsi3`; the remaining code is
+memory-intensive (matrix/list operations), so load-use stalls are proportionally more visible.
+
+**Remaining high-value opportunities: P4 (push to 400 MHz, +33% raw score)**
+
 ---
 
 ## Bottleneck Analysis
@@ -155,8 +176,9 @@ the address channel was already idle. Now only the rare case (addr pending) ente
 
 Result: fetch bubbles fell from 15.3% → 11.6% of cycles in the 700M cycle window.
 
-### P7 — Implement RV32M extension (hardware multiply/divide)
-**Files:** `rtl/execute.sv`, `rtl/inc/riscv_pkg.svh`, `rtl/inc/nox_pkg.svh`
+### P7 — Implement RV32M extension (hardware multiply/divide) ✅ DONE (2026-03-24)
+**Files:** `rtl/muldiv_unit.sv` (new), `rtl/execute.sv`, `rtl/decode.sv`, `rtl/inc/riscv_pkg.svh`, `rtl/inc/nox_pkg.svh`
+**Actual gain: +141.9% CM/MHz** (1.025 → 2.479; predicted +138%)
 
 **Expected gain: ~+138% CM/MHz** (1.025 → ~2.44), measured from simulation profiling.
 
