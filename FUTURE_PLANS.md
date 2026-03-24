@@ -66,7 +66,30 @@ Load-use stalls rose from 1.4% → 3.9% of cycles. With hardware multiply the co
 inner loops no longer spend the bulk of their time in `__mulsi3`; the remaining code is
 memory-intensive (matrix/list operations), so load-use stalls are proportionally more visible.
 
-**Remaining high-value opportunities: P4 (push to 400 MHz, +33% raw score)**
+**Remaining high-value opportunities: P8 (Zba+Zbb+Zicond bit-manipulation extensions, +6–12%) or P4 (push to 400 MHz, +33% raw score)**
+
+---
+
+## Post-P7 Bottleneck Analysis (current state, 2026-03-24)
+
+After RV32M, the CoreMark inner loops now expose the actual computation bottlenecks — no longer masked by software multiply. The 1500-iter rv32im stall profile:
+
+| Bottleneck | Cycles lost | % of total |
+|-----------|-------------|-----------|
+| Branch mispredictions (12.3M × ~2 cyc) | ~24.7M | 3.3% |
+| JAL BTB misses (2.3M × ~2 cyc) | ~4.6M | 0.6% |
+| JALR redirects (0.77M × ~2 cyc) | ~1.5M | 0.2% |
+| Load-use stalls | 29.5M | 3.9% |
+| **All fetch bubbles** | **70.1M** | **9.3%** |
+| **All stalls + bubbles** | **~100M** | **~13%** |
+
+The 87% efficient cycles carry the real work. Two levers remain:
+
+**1. Reduce instruction count** (ISA extensions): fewer instructions → fewer cycles at fixed IPC. Even a 5% reduction in instruction count saves ~30M cycles and moves CM/MHz from 2.479 → ~2.60. Extensions Zba and Zbb directly reduce the instruction count in the hot matrix and list kernels.
+
+**2. Reduce branch mispredictions** (Zicond / better prediction): 12.3M events × 2 cycles = 24.7M cycles. Branchless conditional ops (Zicond) let GCC replace small if-then-else sequences with `czero` pairs, removing branches that are inherently hard to predict (data-dependent 50/50 splits).
+
+**Theoretical ceiling** (zero stalls, zero bubbles): 605M − 100M = 505M cycles for 1500 iter → 2.97 CM/MHz. Extensions pushing instruction count down ~10% would move toward ~2.8–3.0 CM/MHz.
 
 ---
 
@@ -249,13 +272,108 @@ If added: a small direct-mapped cache (1–2 KB, 4-word lines) is sufficient for
 CoreMark's working set. This is a significant addition requiring tag/valid arrays,
 line-fill logic, and a miss-stall mechanism in fetch.
 
+### P8 — Zba: address-generation bit-manipulation extension
+**Files:** `rtl/execute.sv`, `rtl/decode.sv`, `rtl/inc/riscv_pkg.svh`
+
+Zba adds three R-type instructions: `sh1add` (rd = rs1<<1 + rs2), `sh2add` (rd = rs1<<2 + rs2), `sh3add` (rd = rs1<<3 + rs2). All share funct7=`0010000`, opcode=OP (unallocated in RV32IM), distinguished by funct3=010/100/110.
+
+**Why it helps CoreMark:** The hot kernels all index integer arrays:
+- `matrix_mul_*`: double-nested loops over `int16_t[40][40]` — inner index `a[i][j]` = base + i×80 + j×2 → `sh1add j, j, row_ptr` saves one instruction per column
+- `core_bench_list`: linked-list element access with `int32_t` fields — `sh2add` for any 4-byte-stride index
+- `core_bench_state`: enum/byte array indexing
+
+Without Zba, each stride-4 index requires `slli + add` (2 instructions). With `sh2add` the compiler fuses them to 1. GCC emits `sh1add`/`sh2add`/`sh3add` automatically with `-march=rv32im_zba`.
+
+**Implementation:** In `decode.sv`, detect funct7=`0010000` on `RV_OP` (not already M extension, which is funct7=`0000001`). Add `is_shnadd` flag to `s_id_ex_t`. In `execute.sv` ALU: compute `(op1 << {1,2,3}) + op2`. No pipeline changes required (single-cycle ALU op).
+
+Expected gain: **+4–8% CM/MHz** (2.479 → ~2.60–2.68)
+
+---
+
+### P9 — Zbb: basic bit-manipulation subset (min/max/sext)
+**Files:** `rtl/execute.sv`, `rtl/decode.sv`
+
+Prioritised subset of Zbb (full Zbb has 30+ ops; only the high-value ones for CoreMark):
+
+| Instruction | Encoding (funct7/funct3) | Operation | Benefit |
+|------------|--------------------------|-----------|---------|
+| `min`  | 0000101/100, OP | rd = signed min(rs1, rs2) | replaces `blt + mv` pair |
+| `minu` | 0000101/101, OP | rd = unsigned min | ditto for unsigned comparisons |
+| `max`  | 0000101/110, OP | rd = signed max | |
+| `maxu` | 0000101/111, OP | rd = unsigned max | |
+| `sext.b` | 0110000/rs2=00100, OP-IMM | sign-extend byte | replaces `slli 24 + srai 24` |
+| `sext.h` | 0110000/rs2=00101, OP-IMM | sign-extend halfword | replaces `slli 16 + srai 16` |
+| `zext.h` | 0000100/100, OP (PACK w/ rs2=x0) | zero-extend halfword | replaces `slli 16 + srli 16` |
+| `andn`/`orn`/`xnor` | 0100000/111/110/100, OP | logical with inversion | CRC bit manipulation |
+
+**Why it helps CoreMark:**
+- `min`/`max`: `core_bench_list` sorts elements with compare+branch+select; `max` replaces these with a single data op, eliminating 50/50 unpredictable branches. `core_state_transition` also uses clamping patterns.
+- `sext.b`/`sext.h`: `crcu8`/`crcu16` load bytes/halfwords and sign-extend them; currently 2 shifts → 1 instruction.
+- `andn`: CRC XOR-masking (`crc & mask → crc ^ masked_poly`) uses `andn` natively.
+
+GCC flag: `-march=rv32im_zbb` (or `_zbb_zba` combined).
+
+**Implementation:** All are single-cycle ALU operations. `min`/`max` decode identically to other R-type via funct7=`0000101`. `sext.b`/`sext.h` use the existing OP-IMM decoder extended to check funct7=`0110000`. No pipeline changes required.
+
+Expected gain: **+3–6% CM/MHz** (2.479 → ~2.55–2.63)
+
+---
+
+### P10 — Zicond: integer conditional operations
+**Files:** `rtl/execute.sv`, `rtl/decode.sv`
+
+Adds two R-type instructions:
+- `czero.eqz rd, rs1, rs2`: rd = (rs2 == 0) ? 0 : rs1 — zero `rs1` if condition is zero
+- `czero.nez rd, rs1, rs2`: rd = (rs2 != 0) ? 0 : rs1 — zero `rs1` if condition is non-zero
+
+Encoding: funct7=`0000111`, opcode=OP (unallocated in RV32IM), funct3=101/111.
+
+**Why it helps CoreMark:** A branchless conditional select `rd = cond ? a : b` becomes:
+```asm
+czero.nez t0, a, cond   # t0 = (cond != 0) ? 0 : a  →  a if cond==0
+czero.eqz t1, b, cond   # t1 = (cond == 0) ? 0 : b  →  b if cond!=0
+or        rd, t0, t1    # rd = a|b (only one is non-zero)
+```
+This is 3 instructions vs `beq/bne + mv` (branch + move), and — critically — **never mispredicts**. CoreMark's 12.3M misprediction events (24.7M lost cycles, 3.3% of total) come from data-dependent comparisons in list sorting and state transitions that are fundamentally unpredictable. Zicond eliminates the branches themselves.
+
+GCC uses Zicond automatically with `-march=rv32im_zicond -O2` for eligible if-then-else patterns.
+
+**Implementation:** Single-cycle ALU: `(rs2 == 0) ? 0 : rs1` is a 32-bit mux controlled by NOR-reduce of rs2. No pipeline changes required.
+
+Expected gain: **+3–5% CM/MHz** (2.479 → ~2.55–2.60). Depends on how many unpredictable branches GCC converts to czero sequences.
+
+---
+
+### P8+P9+P10 combined — Zba + Zbb + Zicond package
+Enabling all three together with `-march=rv32imzba_zbb_zicond` allows GCC to co-optimize across them. Combined expected gain: **+8–15% CM/MHz** → ~2.68–2.85 CM/MHz. The upper bound approaches the theoretical stall-free ceiling of ~2.97.
+
+Implementation order: P8 (Zba) first — highest ROI per instruction added, and simplest ALU change. P9 (Zbb min/max subset) second. P10 (Zicond) third.
+
+---
+
+### P11 — C extension (Compressed instructions) — low priority for simulation
+**Files:** `rtl/fetch.sv`, `rtl/decode.sv`, new fetch alignment buffer
+
+The C extension maps the most common RV32I instructions to 16-bit encodings, reducing code size by ~25–35%.
+
+**Why it has limited benefit in simulation:** With 1-cycle AXI memory, instruction fetch is never the bottleneck — all fetch bubbles are from misprediction redirects, not memory latency. The primary simulation benefit would be reduced BTB aliasing: smaller code footprint means hot-path PCs are more concentrated within the 64-entry BTB's index space, improving hit rate for JAL BTB misses (currently 2.3M events × 2 cyc = 4.6M cycles = 0.6% of total).
+
+**On real hardware** the benefit is much larger: smaller binary fits better in I-cache, reducing memory traffic. Worth implementing for FPGA deployment.
+
+**Implementation complexity:** HIGH. The fetch stage must handle 2-byte-aligned PCs, the AXI bus always returns 32-bit words so two compressed instructions can arrive in one word, and the decode stage must handle 16-bit instructions that may straddle a 4-byte boundary. Requires a 48-bit fetch buffer (hold current word + possible carry-over halfword).
+
+Expected simulation gain: **+2–4%** (BTB). Expected FPGA/silicon gain: **+8–15%** (I-cache efficiency).
+
 ---
 
 ## Won't Do (and why)
 
 | Idea | Reason |
 |------|--------|
-| Eliminate load-use stall entirely | Reintroduces the 3.11 ns in2out path that failed timing |
-| Instruction cache (current sim) | axi_mem is already 1-cycle; all bubbles are from mispredictions not memory latency |
-| Out-of-order execution | Major redesign; incompatible with current pipeline philosophy |
-| Superscalar (dual-issue) | Significant area cost; diminishing returns for RV32I embedded use |
+| Eliminate load-use stall entirely | Reintroduces the 3.11 ns in2out path that failed timing at 300 MHz |
+| Instruction cache (current sim) | axi_mem is already 1-cycle; all fetch bubbles are misprediction redirects, not memory latency |
+| F/D/Q extensions (floating point) | CoreMark is pure integer; zero benefit |
+| A extension (atomics) | CoreMark is single-threaded; zero benefit |
+| V extension (vector) | Fundamental core redesign; not compatible with 4-stage in-order philosophy |
+| Out-of-order execution | Major redesign; incompatible with current pipeline |
+| Superscalar (dual-issue) | Would push CM/MHz toward ~4.5 but requires 2× decode width, 4-read-port register file, and dual hazard logic — a near-complete redesign. Worth considering as a separate "NoX v2" project. |
