@@ -22,6 +22,8 @@ module decode
   input   valid_t       fetch_valid_i,
   output  ready_t       fetch_ready_o,
   input   instr_raw_t   fetch_instr_i,
+  input   logic         fetch_bp_taken_i,          // BP predicted this instruction taken
+  input   pc_t          fetch_bp_predict_target_i, // P2: BP predicted target address
   // From MEM/WB stg I/F
   input   s_wb_t        wb_dec_i,
   // To EXEC stg I/F
@@ -29,7 +31,10 @@ module decode
   output  rdata_t       rs1_data_o,
   output  rdata_t       rs2_data_o,
   output  valid_t       id_valid_o,
-  input   ready_t       id_ready_i
+  input   ready_t       id_ready_i,
+  // PC tracking update from execute on correct prediction (no pipeline flush)
+  input                 decode_pc_update_i,
+  input   pc_t          decode_pc_update_addr_i
 );
   valid_t     dec_valid_ff, next_vld_dec;
   s_instr_t   instr_dec;
@@ -84,6 +89,12 @@ module decode
         next_id_ex.imm    = gen_imm(fetch_instr_i, I_IMM);
         next_id_ex.rshift = instr_dec[30] ? RV_SRA : RV_SRL;
         next_id_ex.we_rd  = 1'b1;
+        // Only propagate funct7_raw for shift instructions (funct3=001 SLL, funct3=101 SRL/SRA).
+        // For ADDI/SLTI/XORI/ORI/ANDI the upper immediate bits must NOT trigger
+        // extension dispatch in execute (their imm[11:5] could alias extension encodings).
+        // sext.b/sext.h are OP_IMM+SLL with funct7=0110000 — captured here correctly.
+        if (instr_dec.f3 == RV_F3_SLL || instr_dec.f3 == RV_F3_SRL_SRA)
+          next_id_ex.funct7_raw = fetch_instr_i[31:25];
       end
       RV_LUI: begin
         next_id_ex.f3     = RV_F3_ADD_SUB;
@@ -100,12 +111,26 @@ module decode
         next_id_ex.we_rd  = 1'b1;
       end
       RV_OP: begin
-        next_id_ex.f3     = instr_dec.f3;
-        next_id_ex.rs1_op = REG_RF;
-        next_id_ex.rs2_op = REG_RF;
-        next_id_ex.f7     = instr_dec[30] ? RV_F7_1 : RV_F7_0;
-        next_id_ex.rshift = instr_dec[30] ? RV_SRA : RV_SRL;
-        next_id_ex.we_rd  = 1'b1;
+        next_id_ex.f3         = instr_dec.f3;
+        next_id_ex.funct7_raw = fetch_instr_i[31:25];
+        next_id_ex.rs1_op     = REG_RF;
+        next_id_ex.rs2_op     = REG_RF;
+        next_id_ex.we_rd      = 1'b1;
+        case (fetch_instr_i[31:25])
+          7'b000_0001: begin                         // P7: RV32M (funct7=0000001)
+            next_id_ex.is_muldiv = 1'b1;
+          end
+          7'b010_0000: begin                         // SUB/SRA (base I) + Zbb andn/orn/xnor
+            next_id_ex.f7     = RV_F7_1;
+            next_id_ex.rshift = RV_SRA;
+          end
+          // Zba (0010000), Zbb min/max (0000101), Zbb zext.h (0000100),
+          // Zicond (0000111): funct7_raw already captured; execute handles dispatch
+          default: begin                             // funct7=0000000: ADD/SLT/SLL/XOR/OR/AND/SRL
+            next_id_ex.f7     = RV_F7_0;
+            next_id_ex.rshift = RV_SRL;
+          end
+        endcase
       end
       RV_JAL: begin
         next_id_ex.jump   = 1'b1;
@@ -220,6 +245,31 @@ module decode
       next_id_ex.pc_dec  = pc_jump_i;
     end
 
+    // When execute correctly predicted a JAL/taken-branch and suppressed
+    // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment by 4
+    // from the jump's PC instead of the actual target.  Use the dedicated
+    // update signal to fix up pc_dec without flushing the pipeline.
+    //
+    // When execute correctly predicted a JAL/taken-branch and suppressed
+    // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment by 4
+    // from the jump's PC instead of the actual target.  Use the dedicated
+    // update signal to fix up pc_dec without flushing the pipeline.
+    //
+    // There are three cases:
+    //  a) An instruction is being consumed this cycle (fetch_valid_i && id_ready_i):
+    //     set pc_dec = TARGET directly so the instruction gets the right PC.
+    //  b) wait_inst_ff=0 (after a misprediction redirect): the +4 increment does
+    //     NOT fire when the next instruction arrives, so set TARGET directly.
+    //  c) FIFO empty, wait_inst_ff=1: +4 WILL fire on next arrival → set T-4.
+    //     (When id_ready_i=0 the stall override below discards this anyway.)
+    if (decode_pc_update_i && ~jump_i) begin
+      if ((fetch_valid_i && id_ready_i) || ~wait_inst_ff) begin
+        next_id_ex.pc_dec = decode_pc_update_addr_i;
+      end else begin
+        next_id_ex.pc_dec = decode_pc_update_addr_i - 'd4;
+      end
+    end
+
     next_id_ex.trap.pc_addr = next_id_ex.pc_dec;
 
     next_wait_inst = wait_inst_ff;
@@ -246,6 +296,11 @@ module decode
       end
     end
 
+    // Propagate branch-predictor tag alongside the decoded instruction.
+    // Only set when there is a valid instruction being consumed.
+    next_id_ex.bp_taken          = fetch_bp_taken_i;
+    next_id_ex.bp_predict_target = fetch_bp_predict_target_i;
+
     // We are stalling due to bp on the LSU
     if (~id_ready_i) begin
       next_id_ex = id_ex_ff;
@@ -271,8 +326,12 @@ module decode
   register_file u_register_file(
     .clk       (clk),
     .rst       (rst),
-    .rs1_addr_i(instr_dec.rs1),
-    .rs2_addr_i(instr_dec.rs2),
+    // During a load-use stall (id_ready_i=0), the FIFO is not consumed so
+    // instr_dec points to the NEXT instruction, not the stalled one.
+    // The write-through comparison must use the stalled instruction's register
+    // addresses (from id_ex_ff) so WB's loaded value reaches rs1_ff/rs2_ff.
+    .rs1_addr_i(id_ready_i ? raddr_t'(instr_dec.rs1) : id_ex_ff.rs1_addr),
+    .rs2_addr_i(id_ready_i ? raddr_t'(instr_dec.rs2) : id_ex_ff.rs2_addr),
     .rd_addr_i (wb_dec_i.rd_addr),
     .rd_data_i (wb_dec_i.rd_data),
     .we_i      (wb_dec_i.we_rd),
@@ -300,16 +359,16 @@ module decode
     end
   end
 
-  integer ret_fd, j;
+  integer j;
   initial begin
-      ret_fd = $fopen("retired_instr_nox.txt", "w");
       j = 0;
   end
 
   always_ff @ (posedge clk) begin
     if (will_be_executed) begin
-      $fdisplay (ret_fd, "[%d] pc=[%x] instr=[%x]", j, id_ex_ff.pc_dec, instr_retired_ff);
       j++;
+      if (j % 10000000 == 0)
+        $display("[HEARTBEAT] %0d instructions retired, last pc=%08h", j, id_ex_ff.pc_dec);
     end
   end
 

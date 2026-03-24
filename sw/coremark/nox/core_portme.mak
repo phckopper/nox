@@ -46,7 +46,7 @@ OBJCOPY	 = $(RUN_CMD)objcopy
 #	Use this flag to define compiler options. Note, you can add compiler options from the command line using XCFLAGS="other flags"
 UART_MODE ?= REAL_UART
 PORT_CFLAGS = -O0 -g              \
-          	  -march=rv32i	      \
+          	  -march=rv32im	      \
 			  -mabi=ilp32		  \
 			  -Wall				  \
 			  -Wno-unused		  \
@@ -70,7 +70,7 @@ LFLAGS 	= -Tsections.ld       \
           -g				  \
 		  -Wl,-gc-sections	  \
 		  -Wl,-Map=image.map,--print-memory-usage \
-		  -march=rv32i		  \
+		  -march=rv32im		  \
 		  -mabi=ilp32		  \
 		  -nostartfiles 	  \
 		  -lgcc -lm -lc

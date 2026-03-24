@@ -36,6 +36,18 @@ module execute
   // To FETCH stg
   output  logic             fetch_req_o,
   output  pc_t              fetch_addr_o,
+  // To DECODE stg — PC tracking update on correct prediction (no flush)
+  output  logic             decode_pc_update_o,
+  output  pc_t              decode_pc_update_addr_o,
+  // Branch predictor update
+  output  logic             bp_update_o,
+  output  pc_t              bp_update_pc_o,
+  output  logic             bp_update_taken_o,
+  output  pc_t              bp_update_target_o,
+  // P2: RAS call/return signals (routed through fetch to branch_predictor)
+  output  logic             bp_is_call_o,
+  output  pc_t              bp_call_ret_addr_o,
+  output  logic             bp_is_return_o,
   // Trap signals
   input   s_trap_info_t     fetch_trap_i,
   input   s_trap_lsu_info_t lsu_trap_i
@@ -52,11 +64,47 @@ module execute
   logic         jump_or_branch;
   s_branch_t    branch_ff, next_branch;
   s_jump_t      jump_ff, next_jump;
+  // PC of the branch/jump instruction held in branch_ff / jump_ff
+  pc_t          branch_pc_ff, next_branch_pc;
+  pc_t          jump_pc_ff, next_jump_pc;
+  // BP state carried alongside branch_ff / jump_ff
+  logic         bp_taken_for_branch_ff, next_bp_taken_for_branch;
+  logic         bp_taken_for_jump_ff, next_bp_taken_for_jump;
+  logic         is_jal_for_jump_ff, next_is_jal_for_jump;
+  // P2: predicted target and call/return register operand addresses
+  pc_t          bp_predict_target_for_jump_ff, next_bp_predict_target_for_jump;
+  raddr_t       rd_addr_for_jump_ff,  next_rd_addr_for_jump;
+  raddr_t       rs1_addr_for_jump_ff, next_rs1_addr_for_jump;
+  // Correct-prediction wires (combinational, used in both alu_proc and fetch_req)
+  logic         correct_branch_pred;
+  logic         correct_jump_pred;
+  logic         no_jump_guard;
   rdata_t       csr_rdata;
   s_trap_info_t trap_out;
   logic         will_jump_next_clk;
   logic         eval_trap;
+  logic         load_use_hazard;
+  logic         mispred_not_taken;
+  logic         wrong_path;
   s_trap_info_t instr_addr_misaligned;
+
+  // P7: MulDiv unit interface
+  logic         muldiv_valid;        // start pulse to unit
+  logic         muldiv_stall;        // unit is computing (stall pipeline)
+  logic         muldiv_result_valid; // unit done: result ready this cycle
+  rdata_t       muldiv_result;       // result from unit
+
+  // A correct prediction means the BP already redirected fetch to the right
+  // target, so execute must NOT fire fetch_req_o again (that would flush the
+  // already-correct in-flight fetches and re-fetch redundantly).
+  assign correct_branch_pred = branch_ff.b_act && branch_ff.take_branch &&
+                               bp_taken_for_branch_ff;
+  // Suppress for JAL (deterministic target = pc+imm) OR for correctly-
+  // predicted JALR: when the BTB/RAS predicted the exact same target that
+  // execute resolved, the pipeline is already on the right path.
+  assign correct_jump_pred   = jump_ff.j_act && bp_taken_for_jump_ff &&
+                               (is_jal_for_jump_ff ||
+                                jump_ff.j_addr == bp_predict_target_for_jump_ff);
 
   function automatic branch_dec(branch_t op, rdata_t rs1, rdata_t rs2);
     logic         take_branch;
@@ -85,6 +133,14 @@ module execute
         rs2_fwd = FWD_REG;
       end
     end
+
+    // Load-use hazard: load in WB stage, dependent instruction in EX.
+    // Stall for 1 cycle so the loaded value is read from the register file
+    // (via bkp_load_ff write-through) rather than forwarded combinationally
+    // from AXI rdata, eliminating the in2out timing violation.
+    load_use_hazard = (ex_mem_wb_ff.lsu == LSU_LOAD) &&
+                      ~lsu_bp_i &&
+                      (rs1_fwd == FWD_REG || rs2_fwd == FWD_REG);
   end : fwd_mux
 
   always_comb begin : alu_proc
@@ -95,56 +151,160 @@ module execute
 
     next_ex_mem_wb = ex_mem_wb_ff;
 
-    // Mux Src A
-    case (id_ex_i.rs1_op)
-      REG_RF:   op1 = alu_t'(rs1_data_i);
-      IMM:      op1 = alu_t'(id_ex_i.imm);
-      ZERO:     op1 = alu_t'('0);
-      PC:       op1 = alu_t'(id_ex_i.pc_dec);
-      default:  op1 = alu_t'('0);
-    endcase
+    // Mux Src A (forwarding has highest priority)
+    if (rs1_fwd == FWD_REG) begin
+      op1 = alu_t'(wb_value_i);
+    end else begin
+      case (id_ex_i.rs1_op)
+        REG_RF:   op1 = alu_t'(rs1_data_i);
+        IMM:      op1 = alu_t'(id_ex_i.imm);
+        ZERO:     op1 = alu_t'('0);
+        PC:       op1 = alu_t'(id_ex_i.pc_dec);
+        default:  op1 = alu_t'('0);
+      endcase
+    end
 
-    op1 = (rs1_fwd == FWD_REG) ? wb_value_i : op1;
+    // Mux Src B (forwarding has highest priority)
+    if (rs2_fwd == FWD_REG) begin
+      op2 = alu_t'(wb_value_i);
+    end else begin
+      case (id_ex_i.rs2_op)
+        REG_RF:   op2 = alu_t'(rs2_data_i);
+        IMM:      op2 = alu_t'(id_ex_i.imm);
+        ZERO:     op2 = alu_t'('0);
+        PC:       op2 = alu_t'(id_ex_i.pc_dec);
+        default:  op2 = alu_t'('0);
+      endcase
+    end
 
-    // Mux Src B
-    case (id_ex_i.rs2_op)
-      REG_RF:   op2 = alu_t'(rs2_data_i);
-      IMM:      op2 = alu_t'(id_ex_i.imm);
-      ZERO:     op2 = alu_t'('0);
-      PC:       op2 = alu_t'(id_ex_i.pc_dec);
-      default:  op2 = alu_t'('0);
-    endcase
-
-    op2 = (rs2_fwd == FWD_REG) ? wb_value_i : op2;
-
-    // ALU compute
+    // ALU compute — base RV32IM + Zba / Zbb-subset / Zicond extensions
     case (id_ex_i.f3)
+      // funct3=000: ADD, SUB — no extension uses this funct3
       RV_F3_ADD_SUB:  res = (id_ex_i.f7 == RV_F7_1) ? op1 - op2 : op1 + op2;
-      RV_F3_SLT:      res = (signed'(op1) < signed'(op2)) ? 'd1 : 'd0;
-      RV_F3_SLTU:     res = (op1 < op2) ? 'd1 : 'd0;
-      RV_F3_XOR:      res = (op1 ^ op2);
-      RV_F3_OR:       res = (op1 | op2);
-      RV_F3_AND:      res = (op1 & op2);
-      RV_F3_SLL:      res = (id_ex_i.rs2_op == IMM) ? (op1 << op2[4:0]) : (op1 << op2[4:0]);
-      RV_F3_SRL_SRA:  res = (id_ex_i.rshift == RV_SRA) ? signed'((signed'(op1) >>> op2[4:0])) : (op1 >> op2[4:0]);
-      default:        res = 'd0;
+
+      // funct3=001 (SLL/SLLI): also sext.b (funct7=0110000,shamt=00100)
+      //                         and sext.h (funct7=0110000,shamt=00101)  [Zbb]
+      RV_F3_SLL: begin
+        if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0100)
+          res = {{24{op1[7]}},  op1[7:0]};       // sext.b
+        else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0101)
+          res = {{16{op1[15]}}, op1[15:0]};      // sext.h
+        else
+          res = op1 << op2[4:0];                 // SLL / SLLI
+      end
+
+      // funct3=010 (SLT): also sh1add (funct7=0010000)  [Zba]
+      RV_F3_SLT: begin
+        if (id_ex_i.funct7_raw == 7'b001_0000)
+          res = (op1 << 1) + op2;                // sh1add
+        else
+          res = (signed'(op1) < signed'(op2)) ? 'd1 : 'd0;  // SLT
+      end
+
+      // funct3=011 (SLTU): no extension uses this funct3
+      RV_F3_SLTU:  res = (op1 < op2) ? 'd1 : 'd0;
+
+      // funct3=100 (XOR): sh2add (0010000), min (0000101), xnor (0100000),
+      //                    zext.h (0000100)  [Zba/Zbb]
+      RV_F3_XOR: begin
+        case (id_ex_i.funct7_raw)
+          7'b001_0000: res = (op1 << 2) + op2;              // sh2add  [Zba]
+          7'b000_0101: res = ($signed(op1) < $signed(op2)) ? op1 : op2; // min [Zbb]
+          7'b010_0000: res = ~(op1 ^ op2);                  // xnor   [Zbb]
+          7'b000_0100: res = {16'b0, op1[15:0]};            // zext.h [Zbb]
+          default:     res = op1 ^ op2;                     // XOR
+        endcase
+      end
+
+      // funct3=101 (SRL/SRA): minu (0000101), czero.eqz (0000111)  [Zbb/Zicond]
+      RV_F3_SRL_SRA: begin
+        case (id_ex_i.funct7_raw)
+          7'b000_0101: res = (op1 < op2) ? op1 : op2;       // minu   [Zbb]
+          7'b000_0111: res = (op2 == '0) ? '0 : op1;        // czero.eqz [Zicond]
+          default:     res = (id_ex_i.rshift == RV_SRA) ?
+                             signed'((signed'(op1) >>> op2[4:0])) :
+                             (op1 >> op2[4:0]);              // SRL/SRA
+        endcase
+      end
+
+      // funct3=110 (OR): sh3add (0010000), max (0000101), orn (0100000)  [Zba/Zbb]
+      RV_F3_OR: begin
+        case (id_ex_i.funct7_raw)
+          7'b001_0000: res = (op1 << 3) + op2;              // sh3add  [Zba]
+          7'b000_0101: res = ($signed(op1) > $signed(op2)) ? op1 : op2; // max [Zbb]
+          7'b010_0000: res = op1 | ~op2;                    // orn     [Zbb]
+          default:     res = op1 | op2;                     // OR
+        endcase
+      end
+
+      // funct3=111 (AND): maxu (0000101), andn (0100000), czero.nez (0000111)  [Zbb/Zicond]
+      RV_F3_AND: begin
+        case (id_ex_i.funct7_raw)
+          7'b000_0101: res = (op1 > op2) ? op1 : op2;       // maxu   [Zbb]
+          7'b010_0000: res = op1 & ~op2;                    // andn   [Zbb]
+          7'b000_0111: res = (op2 != '0) ? '0 : op1;        // czero.nez [Zicond]
+          default:     res = op1 & op2;                     // AND
+        endcase
+      end
+
+      default: res = 'd0;
     endcase
 
     next_ex_mem_wb.result  = (id_ex_i.jump) ? alu_t'(id_ex_i.pc_dec+'d4) : res;
     next_ex_mem_wb.rd_addr = id_ex_i.rd_addr;
     next_ex_mem_wb.we_rd   = id_ex_i.we_rd;
+    next_ex_mem_wb.lsu     = id_ex_i.lsu;
 
     if (lsu_bp_i) begin
       next_ex_mem_wb = ex_mem_wb_ff;
       id_ready_o = 'b0;
     end
 
-    if (jump_or_branch) begin
+    if (load_use_hazard) begin
+      // Stall: squash this instruction's WB write and clear the load flag
+      // so the hazard does not re-trigger next cycle.
+      next_ex_mem_wb.we_rd = 'b0;
+      next_ex_mem_wb.lsu   = NO_LSU;
+      id_ready_o           = 'b0;
+    end
+
+    // Suppress we_rd for instructions on the wrong speculative path:
+    // Case 1: a taken branch/jump resolved — the following fall-through
+    //         instruction is wrong-path, UNLESS BP correctly predicted it.
+    // Case 2: branch was predicted taken but actually not-taken — the
+    //         instruction from the speculative target path must be squashed.
+    if ((jump_or_branch && ~correct_branch_pred && ~correct_jump_pred) ||
+        (branch_ff.b_act && ~branch_ff.take_branch && bp_taken_for_branch_ff)) begin
       next_ex_mem_wb.we_rd = 'b0;
     end
 
     if (id_ex_i.csr.op != RV_CSR_NONE) begin
       next_ex_mem_wb.result = csr_rdata;
+    end
+
+    // P7: MulDiv stall/result injection.
+    // muldiv_valid: unit is idle and we have a fresh muldiv instruction.
+    // muldiv_stall: unit is still computing (cycles 1+).
+    // Both suppress WB and stall decode; they are mutually exclusive.
+    // muldiv_result_valid: computation done — inject result into WB.
+    // (lsu_bp_i cannot be 1 simultaneously with muldiv_result_valid because
+    //  result_valid_o is gated by ~freeze_i = ~lsu_bp_i inside muldiv_unit.)
+    muldiv_valid = id_ex_i.is_muldiv && ~muldiv_stall && ~muldiv_result_valid
+                  && ~load_use_hazard && ~lsu_bp_i && ~wrong_path;
+
+    if (muldiv_valid || muldiv_stall) begin
+      next_ex_mem_wb.we_rd = 1'b0;
+      next_ex_mem_wb.lsu   = NO_LSU;
+      id_ready_o           = 1'b0;
+    end
+
+    if (muldiv_result_valid) begin
+      // id_ex_i still holds the muldiv instruction (decode was stalled)
+      next_ex_mem_wb.result  = muldiv_result;
+      next_ex_mem_wb.rd_addr = id_ex_i.rd_addr;
+      next_ex_mem_wb.we_rd   = id_ex_i.we_rd;
+      next_ex_mem_wb.lsu     = NO_LSU;
+      // id_ready_o stays 1: release stall so decode advances this cycle
     end
 
     ex_mem_wb_o = ex_mem_wb_ff;
@@ -161,20 +321,56 @@ module execute
 
     jump_or_branch = ((branch_ff.b_act && branch_ff.take_branch) || jump_ff.j_act);
 
-    next_branch.b_act   = id_ex_i.branch && ~lsu_bp_i;
+    // Allow processing of the next branch/jump even when jump_or_branch=1, as
+    // long as the previous branch/jump was correctly predicted (pipeline was
+    // never flushed, so the current instruction is on the right path).
+    no_jump_guard = ~jump_or_branch || correct_jump_pred || correct_branch_pred;
+
+    // When recovering from a not-taken branch misprediction (branch was
+    // predicted taken but actually not taken), the instruction currently in
+    // execute arrived from the wrong speculative path.  We must squash its
+    // branch/jump so it cannot register stale control-flow data into
+    // branch_ff/jump_ff, which would fire a spurious fetch redirect next cycle.
+    mispred_not_taken = branch_ff.b_act && ~branch_ff.take_branch &&
+                        bp_taken_for_branch_ff;
+
+    // Instruction currently in execute is on the wrong speculative path when:
+    // Case 1: a taken branch/jump just resolved and BP did not correctly predict it
+    // Case 2: BP predicted taken but branch is actually not-taken (mispred_not_taken)
+    // Wrong-path STOREs must be suppressed to prevent memory corruption.
+    wrong_path        = (jump_or_branch && ~correct_branch_pred && ~correct_jump_pred) ||
+                        mispred_not_taken;
+
+    next_branch.b_act   = id_ex_i.branch && ~lsu_bp_i && ~load_use_hazard &&
+                          ~wrong_path;
     next_branch.b_addr  = id_ex_i.pc_dec + id_ex_i.imm;
-    next_branch.take_branch  = ~jump_or_branch &&
+    next_branch.take_branch  = no_jump_guard &&
                                branch_dec(branch_t'(id_ex_i.f3), op1, op2);
 
-    next_jump.j_act  = ~jump_or_branch && id_ex_i.jump && ~lsu_bp_i;
+    next_jump.j_act  = no_jump_guard && id_ex_i.jump && ~lsu_bp_i &&
+                       ~load_use_hazard && ~wrong_path;
     next_jump.j_addr = {res[31:1], 1'b0};
+
+    // Track the instruction PC so the predictor update carries the right address.
+    next_branch_pc = next_branch.b_act ? id_ex_i.pc_dec : branch_pc_ff;
+    next_jump_pc   = next_jump.j_act   ? id_ex_i.pc_dec : jump_pc_ff;
+
+    // Track BP state so execute can detect correct predictions and suppress
+    // the redundant fetch_req_o / FIFO flush that would otherwise occur.
+    next_bp_taken_for_branch       = next_branch.b_act ? id_ex_i.bp_taken         : bp_taken_for_branch_ff;
+    next_bp_taken_for_jump         = next_jump.j_act   ? id_ex_i.bp_taken         : bp_taken_for_jump_ff;
+    next_is_jal_for_jump           = next_jump.j_act   ? (id_ex_i.rs1_op == PC)   : is_jal_for_jump_ff;
+    // P2: predicted target and register addresses for call/return detection
+    next_bp_predict_target_for_jump = next_jump.j_act  ? id_ex_i.bp_predict_target : bp_predict_target_for_jump_ff;
+    next_rd_addr_for_jump           = next_jump.j_act  ? id_ex_i.rd_addr           : rd_addr_for_jump_ff;
+    next_rs1_addr_for_jump          = next_jump.j_act  ? id_ex_i.rs1_addr          : rs1_addr_for_jump_ff;
 
     fwd_wdata = (id_ex_i.lsu == LSU_STORE) &&
                 (ex_mem_wb_ff.we_rd) &&
                 (ex_mem_wb_ff.rd_addr == id_ex_i.rs2_addr) &&
                 (ex_mem_wb_ff.rd_addr != raddr_t'('h0));
 
-    lsu_o.op_typ  = id_ex_i.lsu;
+    lsu_o.op_typ  = (load_use_hazard || wrong_path) ? NO_LSU : id_ex_i.lsu;
     lsu_o.width   = id_ex_i.lsu_w;
     lsu_o.addr    = res;
     lsu_o.wdata   = rs2_data_i;
@@ -197,16 +393,78 @@ module execute
     end
   end : jump_lsu_mgmt
 
-  always_comb begin : fetch_req
-    fetch_req_o  = '0;
-    fetch_addr_o = '0;
+  // Branch predictor update — fires for every resolved branch (taken or
+  // not-taken) and every unconditional jump.  Jumps are always "taken".
+  always_comb begin : bp_update_proc
+    bp_update_o        = branch_ff.b_act || jump_ff.j_act;
+    bp_update_taken_o  = branch_ff.b_act ? branch_ff.take_branch : 1'b1;
+    bp_update_target_o = branch_ff.b_act ? branch_ff.b_addr      : jump_ff.j_addr;
+    bp_update_pc_o     = branch_ff.b_act ? branch_pc_ff          : jump_pc_ff;
 
-    fetch_req_o  = ((branch_ff.b_act && branch_ff.take_branch) || jump_ff.j_act);
-    fetch_addr_o = (branch_ff.b_act) ? branch_ff.b_addr : jump_ff.j_addr;
+    // P2: RAS push on JAL call (rd=x1), pop on JALR return (rs1=x1)
+    bp_is_call_o       = jump_ff.j_act &&  is_jal_for_jump_ff &&
+                         (rd_addr_for_jump_ff  == raddr_t'(5'd1));
+    bp_call_ret_addr_o = jump_pc_ff + 'd4;
+    bp_is_return_o     = jump_ff.j_act && ~is_jal_for_jump_ff &&
+                         (rs1_addr_for_jump_ff == raddr_t'(5'd1));
+  end : bp_update_proc
+
+  always_comb begin : fetch_req
+    fetch_req_o             = '0;
+    fetch_addr_o            = '0;
+    decode_pc_update_o      = 1'b0;
+    decode_pc_update_addr_o = pc_t'('0);
+
+    // Branch cases:
+    //  taken  + not-predicted  → redirect to target (same as before)
+    //  taken  + correct-pred   → SUPPRESS (fetch already at target)
+    //  taken  + wrong-target   → redirect (handled conservatively: only suppress
+    //                            when taken AND predicted, target verified via BTB)
+    //  not-taken + predicted   → MISPREDICTION: redirect to fall-through PC+4
+    //  not-taken + unpredicted → no redirect needed (sequential fetch continues)
+    //
+    // Jump (JAL only) cases:
+    //  j_act + correct-pred  → SUPPRESS
+    //  j_act + not-predicted → redirect as before
+    //  j_act + JALR          → always redirect (target may vary per call-site)
+    if (branch_ff.b_act) begin
+      if (branch_ff.take_branch && ~correct_branch_pred) begin
+        // Taken but not correctly predicted: redirect to actual target
+        fetch_req_o  = 1'b1;
+        fetch_addr_o = branch_ff.b_addr;
+      end else if (~branch_ff.take_branch && bp_taken_for_branch_ff) begin
+        // Not taken but BP predicted taken: flush speculative target fetches
+        fetch_req_o  = 1'b1;
+        fetch_addr_o = branch_pc_ff + 4;  // fall-through
+      end
+    end
+    if (jump_ff.j_act && ~correct_jump_pred) begin
+      fetch_req_o  = 1'b1;
+      fetch_addr_o = jump_ff.j_addr;
+    end
 
     if (trap_out.active) begin
       fetch_req_o  = 'b1;
       fetch_addr_o = trap_out.pc_addr;
+    end
+
+    // When a JAL/taken-branch is correctly predicted, fetch_req_o stays 0
+    // (no flush needed) but decode never sees jump_i=1, so pc_dec is not
+    // updated to the actual target.  Fire a dedicated PC-update pulse so
+    // decode can fix up pc_dec without flushing the pipeline.
+    if (next_jump.j_act && id_ex_i.bp_taken && (id_ex_i.rs1_op == PC)) begin
+      // Correctly-predicted JAL: target was pc+imm (deterministic)
+      decode_pc_update_o      = 1'b1;
+      decode_pc_update_addr_o = next_jump.j_addr;
+    end else if (next_jump.j_act && id_ex_i.bp_taken && (id_ex_i.rs1_op != PC) &&
+                 (next_jump.j_addr == id_ex_i.bp_predict_target)) begin
+      // Correctly-predicted JALR (BTB/RAS matched actual target)
+      decode_pc_update_o      = 1'b1;
+      decode_pc_update_addr_o = next_jump.j_addr;
+    end else if (next_branch.b_act && next_branch.take_branch && id_ex_i.bp_taken) begin
+      // Correctly-predicted taken branch
+      decode_pc_update_o      = 1'b1;
+      decode_pc_update_addr_o = next_branch.b_addr;
     end
 
     eval_trap = id_ready_o &&
@@ -217,16 +475,103 @@ module execute
 
   `CLK_PROC(clk, rst) begin
     `RST_TYPE(rst) begin
-      ex_mem_wb_ff <= `OP_RST_L;
-      branch_ff    <= s_branch_t'('h0);
-      jump_ff      <= s_jump_t'('h0);
+      ex_mem_wb_ff                 <= `OP_RST_L;
+      branch_ff                    <= s_branch_t'('h0);
+      jump_ff                      <= s_jump_t'('h0);
+      branch_pc_ff                 <= pc_t'('0);
+      jump_pc_ff                   <= pc_t'('0);
+      bp_taken_for_branch_ff       <= 1'b0;
+      bp_taken_for_jump_ff         <= 1'b0;
+      is_jal_for_jump_ff           <= 1'b0;
+      bp_predict_target_for_jump_ff <= pc_t'('0);
+      rd_addr_for_jump_ff          <= raddr_t'('0);
+      rs1_addr_for_jump_ff         <= raddr_t'('0);
     end
     else begin
-      ex_mem_wb_ff <= next_ex_mem_wb;
-      branch_ff    <= next_branch;
-      jump_ff      <= next_jump;
+      ex_mem_wb_ff                 <= next_ex_mem_wb;
+      branch_ff                    <= next_branch;
+      jump_ff                      <= next_jump;
+      branch_pc_ff                 <= next_branch_pc;
+      jump_pc_ff                   <= next_jump_pc;
+      bp_taken_for_branch_ff       <= next_bp_taken_for_branch;
+      bp_taken_for_jump_ff         <= next_bp_taken_for_jump;
+      is_jal_for_jump_ff           <= next_is_jal_for_jump;
+      bp_predict_target_for_jump_ff <= next_bp_predict_target_for_jump;
+      rd_addr_for_jump_ff          <= next_rd_addr_for_jump;
+      rs1_addr_for_jump_ff         <= next_rs1_addr_for_jump;
     end
   end
+
+`ifdef SIMULATION
+  // ── P1: Performance counters ─────────────────────────────────────────
+  // Counts are printed in a `final` block when $finish is called.
+  longint unsigned perf_cycles          = 0;
+  longint unsigned perf_load_use        = 0;
+  longint unsigned perf_branch_mispredict = 0;
+  longint unsigned perf_jalr_redirect   = 0;
+  longint unsigned perf_jal_btb_miss    = 0;
+  longint unsigned perf_fetch_bubble    = 0;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin  // rst=1 = normal operation (active-low reset)
+      perf_cycles <= perf_cycles + 1;
+
+      // Load-use stall: 1 cycle per event
+      if (load_use_hazard)
+        perf_load_use <= perf_load_use + 1;
+
+      // Branch mispredictions: taken-but-not-predicted or predicted-but-not-taken
+      if (branch_ff.b_act &&
+          ((branch_ff.take_branch && ~correct_branch_pred) ||
+           (~branch_ff.take_branch && bp_taken_for_branch_ff)))
+        perf_branch_mispredict <= perf_branch_mispredict + 1;
+
+      // JALR redirect: every unresolved JALR (would be fixed by RAS after warmup)
+      if (jump_ff.j_act && ~correct_jump_pred && ~is_jal_for_jump_ff)
+        perf_jalr_redirect <= perf_jalr_redirect + 1;
+
+      // JAL BTB miss: JAL not predicted (cold or BTB evicted)
+      if (jump_ff.j_act && ~correct_jump_pred && is_jal_for_jump_ff)
+        perf_jal_btb_miss <= perf_jal_btb_miss + 1;
+
+      // Fetch bubble: execute ready but nothing from decode (pipeline empty)
+      if (id_ready_o && ~id_valid_i)
+        perf_fetch_bubble <= perf_fetch_bubble + 1;
+    end
+  end
+
+  final begin
+    $display("");
+    $display("[PERF] ============ Performance Counters ============");
+    $display("[PERF]  Total cycles          : %0d", perf_cycles);
+    $display("[PERF]  Load-use stalls       : %0d cycles  (%0.1f%%)",
+             perf_load_use,    100.0 * perf_load_use          / perf_cycles);
+    $display("[PERF]  Branch mispredictions : %0d events  (~3 cyc ea.)",
+             perf_branch_mispredict);
+    $display("[PERF]  JALR redirects        : %0d events  (~3 cyc ea.)",
+             perf_jalr_redirect);
+    $display("[PERF]  JAL BTB misses        : %0d events  (~3 cyc ea.)",
+             perf_jal_btb_miss);
+    $display("[PERF]  Fetch bubbles         : %0d cycles  (%0.1f%%)",
+             perf_fetch_bubble, 100.0 * perf_fetch_bubble      / perf_cycles);
+    $display("[PERF] ================================================");
+  end
+`endif
+
+  // P7: MulDiv unit
+  // freeze_i = lsu_bp_i pauses the divider counter while AXI is stalled.
+  muldiv_unit u_muldiv (
+    .clk            (clk),
+    .rst            (rst),
+    .valid_i        (muldiv_valid),
+    .freeze_i       (lsu_bp_i),
+    .op_i           (id_ex_i.f3),
+    .a_i            (op1),
+    .b_i            (op2),
+    .stall_o        (muldiv_stall),
+    .result_valid_o (muldiv_result_valid),
+    .result_o       (muldiv_result)
+  );
 
   csr #(
     .SUPPORT_DEBUG      (SUPPORT_DEBUG),

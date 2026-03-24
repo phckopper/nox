@@ -24,10 +24,21 @@ module fetch
   // From EXEC stg
   input                 fetch_req_i,
   input   pc_t          fetch_addr_i,
+  // Branch predictor update from execute
+  input                 bp_update_i,
+  input   pc_t          bp_update_pc_i,
+  input   logic         bp_update_taken_i,
+  input   pc_t          bp_update_target_i,
+  // P2: RAS call/return signals from execute → branch_predictor
+  input   logic         bp_is_call_i,
+  input   pc_t          bp_call_ret_addr_i,
+  input   logic         bp_is_return_i,
   // To DEC I/F
   output  valid_t       fetch_valid_o,
   input   ready_t       fetch_ready_i,
   output  instr_raw_t   fetch_instr_o,
+  output  logic         fetch_bp_taken_o,          // BP predicted taken
+  output  pc_t          fetch_bp_predict_target_o, // P2: BP predicted target
   // Trap - Instruction access fault
   output  s_trap_info_t trap_info_o
 );
@@ -36,7 +47,7 @@ module fetch
   logic         get_next_instr;
   logic         write_instr;
   buffer_t      buffer_space;
-  instr_raw_t   instr_buffer;
+  instr_raw_t   instr_buffer;  // driven by assign from l0_data_out[31:0]
   logic         full_fifo;
   logic         data_valid;
   logic         data_ready;
@@ -49,9 +60,21 @@ module fetch
   cb_addr_t     pc_addr_ff, next_pc_addr;
   cb_addr_t     pc_buff_ff, next_pc_buff;
   logic         req_ff, next_req;
-  logic         valid_txn_i, valid_txn_o;
+  logic         valid_txn_i;
+  logic         valid_txn_o;  // driven by assign from ot_data_out[0]
   logic         addr_ready;
   logic         instr_access_fault;
+
+  logic         predict_taken;
+  pc_t          predict_target;
+
+  // OT FIFO: [33:2]=predict_target, [1]=bp_taken, [0]=valid_txn  (34 bits)
+  logic [33:0]  ot_data_out;
+  logic         bp_taken_txn;   // bp_taken  propagated from OT FIFO to L0 FIFO
+  pc_t          bp_target_txn;  // predict_target propagated from OT FIFO to L0 FIFO
+
+  // L0 FIFO: [64:33]=predict_target, [32]=bp_taken, [31:0]=instruction  (65 bits)
+  logic [64:0]  l0_data_out;
 
   typedef enum logic [1:0] {
     F_STP,
@@ -100,13 +123,21 @@ module fetch
 
         if (req_ff && addr_ready) begin
           valid_txn_i = 1'b1;
-          next_pc_addr = pc_addr_ff + 'd4;
+          // If the predictor says this fetch address is a taken branch,
+          // redirect to the predicted target instead of falling through.
+          // The confirmed-jump redirect (fetch_req_i) takes priority via
+          // the jump block below.
+          if (predict_taken && ~jump) begin
+            next_pc_addr = predict_target;
+          end else begin
+            next_pc_addr = pc_addr_ff + 'd4;
+          end
         end
 
         if ((req_ff && addr_ready) || ~req_ff) begin
-          // Next txn
+          // Next txn — also gate if FIFO is about to fill while decode stalls
           if (next_ot < (buffer_t'(L0_BUFFER_SIZE))) begin
-            valid_addr  = ~full_fifo;
+            valid_addr  = ~full_fifo && ~(write_instr && (buffer_space == buffer_t'(L0_BUFFER_SIZE-1)) && ~get_next_instr);
           end
         end
 
@@ -115,12 +146,17 @@ module fetch
           next_pc_buff = pc_addr_ff;
           valid_txn_i  = 1'b0;
 
-          if ((req_ff && ~addr_ready) || (next_ot > 'd0)) begin
+          if (req_ff && ~addr_ready) begin
+            // P5: Only enter F_CLR when an address beat is still pending —
+            // must keep driving the address until AXI acknowledges it.
             next_st    = F_CLR;
-          end
-
-          if (req_ff && addr_ready) begin
-            valid_addr = 1'b0;
+          end else begin
+            // P5: Address channel is idle or completes this cycle.
+            // Any in-flight data beats drain naturally: clear_fifo flushed
+            // the OT FIFO so returning beats have no OT entry and are
+            // discarded without stalling.  Issue the jump target now,
+            // saving one redirect bubble vs. waiting in F_CLR.
+            valid_addr = 1'b1;
           end
         end
 
@@ -129,15 +165,18 @@ module fetch
         end
       end
       F_CLR: begin
-        // After a jump request:
-        //  - Finish ongoing txn
+        // P5: Reached only when the address channel was still pending at
+        // jump time.  Keep driving the pre-jump address (pc_buff_ff, via
+        // the rd_addr mux) until AXI accepts it (valid_txn_i=0 marks it
+        // as discard).  Once accepted, immediately issue the jump target —
+        // no need to wait for in-flight data since the OT FIFO was cleared
+        // and returning beats are silently discarded.
         valid_txn_i = 1'b0;
         if (req_ff && ~addr_ready) begin
-          valid_addr  = 1'b1;
-        end
-        else if (next_ot == '0) begin
+          valid_addr  = 1'b1;  // keep driving old address until accepted
+        end else begin
           next_st    = F_REQ;
-          valid_addr = 1'b1; // Next txn is the jump
+          valid_addr = 1'b1;   // immediately issue jump target
         end
       end
       default: valid_addr = 1'b0;
@@ -149,9 +188,18 @@ module fetch
     instr_cb_mosi_o.rd_size       = req_ff ? cb_size_t'(CB_WORD) : cb_size_t'('0);
   end : addr_chn_req
 
+  // Decode OT FIFO output: bit[0]=valid_txn, bit[1]=bp_taken, [33:2]=predict_target
+  assign valid_txn_o  = ot_data_out[0];
+  assign bp_taken_txn = ot_data_out[1];
+  assign bp_target_txn = ot_data_out[33:2];
+  // Decode L0 FIFO output: bits[31:0]=instruction, bit[32]=bp_taken, [64:33]=predict_target
+  assign instr_buffer              = instr_raw_t'(l0_data_out[31:0]);
+  assign fetch_bp_taken_o          = l0_data_out[32];
+  assign fetch_bp_predict_target_o = l0_data_out[64:33];
+
   always_comb begin : rd_chn
     write_instr = 'b0;
-    data_ready = (st_ff == F_REQ) ? ~full_fifo : 'b1;
+    data_ready = (st_ff == F_REQ) ? (~full_fifo || fetch_req_i) : 'b1;
     instr_cb_mosi_o.rd_ready = data_ready;
     read_ot_fifo = ot_empty ? 1'b0 : (data_valid && data_ready);
     // Only write in the FIFO if
@@ -210,38 +258,61 @@ module fetch
     end
   end : fetch_proc_if
 
+  // OT tracking FIFO: WIDTH=34, [33:2]=predict_target, [1]=bp_taken, [0]=valid_txn.
+  // predict_taken and predict_target are captured at address-phase so they travel
+  // with the transaction and are forwarded into the L0 FIFO on the data phase.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (1)
+    .WIDTH    (34)
   ) u_fifo_ot_rd (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  ((req_ff && addr_ready)),
     .read_i   (read_ot_fifo),
-    .data_i   (valid_txn_i),
-    .data_o   (valid_txn_o),
+    .data_i   ({predict_target, predict_taken && ~jump, valid_txn_i}),
+    .data_o   (ot_data_out),
     .error_o  (),
     .full_o   (),
     .empty_o  (ot_empty),
     .ocup_o   ()
   );
 
+  // Instruction FIFO: WIDTH=65, [64:33]=predict_target, [32]=bp_taken, [31:0]=instruction.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (32)
+    .WIDTH    (65)
   ) u_fifo_l0 (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  (write_instr),
     .read_i   (get_next_instr),
-    .data_i   (instr_cb_miso_i.rd_data),
-    .data_o   (instr_buffer),
+    .data_i   ({bp_target_txn, bp_taken_txn, instr_cb_miso_i.rd_data}),
+    .data_o   (l0_data_out),
     .error_o  (),
     .full_o   (full_fifo),
     .empty_o  (),
     .ocup_o   (buffer_space)
+  );
+
+  branch_predictor u_branch_predictor (
+    .clk               (clk),
+    .rst               (rst),
+    // Query: use current fetch address so the prediction is ready
+    // combinationally when computing next_pc_addr.
+    .fetch_pc_i        (pc_addr_ff),
+    .predict_taken_o   (predict_taken),
+    .predict_target_o  (predict_target),
+    // Update from execute on every resolved branch/jump
+    .update_i          (bp_update_i),
+    .update_pc_i       (bp_update_pc_i),
+    .update_taken_i    (bp_update_taken_i),
+    .update_target_i   (bp_update_target_i),
+    // P2: RAS push/pop control from execute
+    .is_call_i         (bp_is_call_i),
+    .call_ret_addr_i   (bp_call_ret_addr_i),
+    .is_return_i       (bp_is_return_i)
   );
 
 `ifdef COCOTB_SIM

@@ -213,6 +213,17 @@
     logic         mret;
     logic         wfi;
     s_trap_info_t trap;
+    // Branch predictor: set when the BP predicted this instruction as a
+    // taken branch so execute can suppress the redirect on correct predictions.
+    logic         bp_taken;
+    // BP predicted target address carried through the pipeline.
+    // Allows execute to suppress the JALR redirect when the BTB/RAS
+    // correctly predicted the return address (avoids the 3-cycle penalty).
+    pc_t          bp_predict_target;
+    // P7: RV32M extension — instruction is a MUL/DIV/REM from funct7=0000001
+    logic         is_muldiv;
+    // P8-P10: raw funct7 bits for Zba/Zbb/Zicond dispatch in execute
+    logic [6:0]   funct7_raw;
   } s_id_ex_t;
 
   typedef struct packed {

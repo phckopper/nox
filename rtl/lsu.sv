@@ -208,4 +208,7 @@ module lsu
       locked_addr_ff  <= next_locked_addr;
     end
   end
+
+  // (debug file logging removed)
+
 endmodule

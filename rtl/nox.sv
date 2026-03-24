@@ -50,6 +50,7 @@ module nox
   valid_t           fetch_valid;
   ready_t           fetch_ready;
   instr_raw_t       fetch_instr;
+  logic             fetch_bp_taken;
   s_id_ex_t         id_ex;
   rdata_t           rs1_data;
   rdata_t           rs2_data;
@@ -62,6 +63,16 @@ module nox
   s_lsu_op_t        lsu_op_wb;
   logic             fetch_req;
   pc_t              fetch_addr;
+  logic             decode_pc_update;
+  pc_t              decode_pc_update_addr;
+  logic             bp_update;
+  pc_t              bp_update_pc;
+  logic             bp_update_taken;
+  pc_t              bp_update_target;
+  logic             bp_is_call;
+  pc_t              bp_call_ret_addr;
+  logic             bp_is_return;
+  pc_t              fetch_bp_predict_target;
   s_wb_t            wb_dec;
   logic             lsu_bp_data;
   s_trap_info_t     fetch_trap;
@@ -141,10 +152,21 @@ module nox
     // From EXEC stage
     .fetch_req_i           (fetch_req),
     .fetch_addr_i          (fetch_addr),
+    // Branch predictor update
+    .bp_update_i           (bp_update),
+    .bp_update_pc_i        (bp_update_pc),
+    .bp_update_taken_i     (bp_update_taken),
+    .bp_update_target_i    (bp_update_target),
+    // P2: RAS call/return signals from execute
+    .bp_is_call_i          (bp_is_call),
+    .bp_call_ret_addr_i    (bp_call_ret_addr),
+    .bp_is_return_i        (bp_is_return),
     // To DEC I/F
     .fetch_valid_o         (fetch_valid),
     .fetch_ready_i         (fetch_ready),
     .fetch_instr_o         (fetch_instr),
+    .fetch_bp_taken_o      (fetch_bp_taken),
+    .fetch_bp_predict_target_o (fetch_bp_predict_target),
     // Trap error fetching
     .trap_info_o           (fetch_trap)
   );
@@ -162,6 +184,8 @@ module nox
     .fetch_valid_i         (fetch_valid),
     .fetch_ready_o         (fetch_ready),
     .fetch_instr_i         (fetch_instr),
+    .fetch_bp_taken_i          (fetch_bp_taken),
+    .fetch_bp_predict_target_i (fetch_bp_predict_target),
     // From MEM/WB stg I/F
     .wb_dec_i              (wb_dec),
     // To EXEC stg I/F
@@ -169,7 +193,9 @@ module nox
     .rs1_data_o            (rs1_data),
     .rs2_data_o            (rs2_data),
     .id_valid_o            (id_valid),
-    .id_ready_i            (id_ready)
+    .id_ready_i            (id_ready),
+    .decode_pc_update_i    (decode_pc_update),
+    .decode_pc_update_addr_i (decode_pc_update_addr)
   );
 
   execute #(
@@ -200,6 +226,18 @@ module nox
     // To FETCH stg
     .fetch_req_o           (fetch_req),
     .fetch_addr_o          (fetch_addr),
+    // To DECODE stg
+    .decode_pc_update_o    (decode_pc_update),
+    .decode_pc_update_addr_o (decode_pc_update_addr),
+    // Branch predictor update
+    .bp_update_o           (bp_update),
+    .bp_update_pc_o        (bp_update_pc),
+    .bp_update_taken_o     (bp_update_taken),
+    .bp_update_target_o    (bp_update_target),
+    // P2: RAS call/return to fetch/branch_predictor
+    .bp_is_call_o          (bp_is_call),
+    .bp_call_ret_addr_o    (bp_call_ret_addr),
+    .bp_is_return_o        (bp_is_return),
     // From diff stgs
     .fetch_trap_i          (fetch_trap),
     .lsu_trap_i            (lsu_trap)

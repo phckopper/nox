@@ -214,6 +214,7 @@ int main(int argc, char** argv, char** env){
   cout << "Elapsed time [s]\t= " <<  elapsed_time << std::endl;
   if (elapsed_time > 0)
     cout << "Sim. frequency [Hz]\t= " << (sim_cycles_timeout-(setup.sim_cycles+1))/elapsed_time << std::endl;
+  dut->core->final();  // trigger SystemVerilog `final` blocks (perf counters etc.)
   dut->close();
   exit(EXIT_SUCCESS);
 }

@@ -143,6 +143,7 @@ CPPFLAGS_SOC	:=	"$(INCS_CPP) -O0 -g3 -Wall						\
 									#-Wunknown-warning-option"
 
 VERIL_ARGS		:=	-CFLAGS $(CPPFLAGS_VERI) 			\
+					                -j 8 \
 									--top-module $(ROOT_MOD_VERI)	\
 									--Mdir $(OUT_VERILATOR)				\
 									-f verilator.flags			  		\
@@ -154,6 +155,7 @@ VERIL_ARGS		:=	-CFLAGS $(CPPFLAGS_VERI) 			\
 									$(ROOT_MOD_VERI)
 
 VERIL_ARGS_SOC	:=	-CFLAGS $(CPPFLAGS_SOC) 			\
+					                    -j 8 \
 										--top-module $(ROOT_MOD_SOC)	\
 										--Mdir $(OUT_VERILATOR)				\
 										-f verilator.flags			  		\
@@ -193,7 +195,7 @@ lint: $(SRC_VERILOG) $(SRC_CPP) $(TB_VERILATOR)
 	#ec $(_CORE_VERILOG)
 
 clean:
-	rm -rf $(OUT_VERILATOR)
+	rm -rf $(OUT_VERILATOR)/*
 
 all: clean $(VERILATOR_EXE)
 	@echo "\n"

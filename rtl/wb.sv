@@ -29,6 +29,13 @@ module wb
 
   function automatic rdata_t fmt_load(s_lsu_op_t load, rdata_t rdata);
     rdata_t data;
+    // Word loads require word-aligned access (addr[1:0]==0), so no barrel
+    // shift is ever needed. Returning rdata directly breaks the combinational
+    // path from AXI rdata through the shift-mux tree to the forwarding bus,
+    // which is the timing-critical load-use forwarding path.
+    if (load.width == RV_LSU_W) begin
+      return rdata;
+    end
     for (int i=0;i<`XLEN/8;i++) begin
       if (load.addr[1:0]==i[1:0]) begin
         data = rdata >> (8*i);
