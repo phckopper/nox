@@ -220,6 +220,8 @@
     // Allows execute to suppress the JALR redirect when the BTB/RAS
     // correctly predicted the return address (avoids the 3-cycle penalty).
     pc_t          bp_predict_target;
+    // P7: RV32M extension — instruction is a MUL/DIV/REM from funct7=0000001
+    logic         is_muldiv;
   } s_id_ex_t;
 
   typedef struct packed {

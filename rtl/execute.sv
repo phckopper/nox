@@ -88,6 +88,12 @@ module execute
   logic         wrong_path;
   s_trap_info_t instr_addr_misaligned;
 
+  // P7: MulDiv unit interface
+  logic         muldiv_valid;        // start pulse to unit
+  logic         muldiv_stall;        // unit is computing (stall pipeline)
+  logic         muldiv_result_valid; // unit done: result ready this cycle
+  rdata_t       muldiv_result;       // result from unit
+
   // A correct prediction means the BP already redirected fetch to the right
   // target, so execute must NOT fire fetch_req_o again (that would flush the
   // already-correct in-flight fetches and re-fetch redundantly).
@@ -214,6 +220,31 @@ module execute
 
     if (id_ex_i.csr.op != RV_CSR_NONE) begin
       next_ex_mem_wb.result = csr_rdata;
+    end
+
+    // P7: MulDiv stall/result injection.
+    // muldiv_valid: unit is idle and we have a fresh muldiv instruction.
+    // muldiv_stall: unit is still computing (cycles 1+).
+    // Both suppress WB and stall decode; they are mutually exclusive.
+    // muldiv_result_valid: computation done — inject result into WB.
+    // (lsu_bp_i cannot be 1 simultaneously with muldiv_result_valid because
+    //  result_valid_o is gated by ~freeze_i = ~lsu_bp_i inside muldiv_unit.)
+    muldiv_valid = id_ex_i.is_muldiv && ~muldiv_stall && ~muldiv_result_valid
+                  && ~load_use_hazard && ~lsu_bp_i && ~wrong_path;
+
+    if (muldiv_valid || muldiv_stall) begin
+      next_ex_mem_wb.we_rd = 1'b0;
+      next_ex_mem_wb.lsu   = NO_LSU;
+      id_ready_o           = 1'b0;
+    end
+
+    if (muldiv_result_valid) begin
+      // id_ex_i still holds the muldiv instruction (decode was stalled)
+      next_ex_mem_wb.result  = muldiv_result;
+      next_ex_mem_wb.rd_addr = id_ex_i.rd_addr;
+      next_ex_mem_wb.we_rd   = id_ex_i.we_rd;
+      next_ex_mem_wb.lsu     = NO_LSU;
+      // id_ready_o stays 1: release stall so decode advances this cycle
     end
 
     ex_mem_wb_o = ex_mem_wb_ff;
@@ -466,6 +497,21 @@ module execute
     $display("[PERF] ================================================");
   end
 `endif
+
+  // P7: MulDiv unit
+  // freeze_i = lsu_bp_i pauses the divider counter while AXI is stalled.
+  muldiv_unit u_muldiv (
+    .clk            (clk),
+    .rst            (rst),
+    .valid_i        (muldiv_valid),
+    .freeze_i       (lsu_bp_i),
+    .op_i           (id_ex_i.f3),
+    .a_i            (op1),
+    .b_i            (op2),
+    .stall_o        (muldiv_stall),
+    .result_valid_o (muldiv_result_valid),
+    .result_o       (muldiv_result)
+  );
 
   csr #(
     .SUPPORT_DEBUG      (SUPPORT_DEBUG),
