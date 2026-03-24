@@ -93,11 +93,11 @@ make help
 ```
 
 ## <a name="uarch"></a> RTL micro architecture
-NoX core is a **4-stages** single issue, in-order pipeline with [**full bypass**](https://en.wikipedia.org/wiki/Classic_RISC_pipeline#Solution_A._Bypassing), which means that all data hazards will have no impact in terms of stalling the design. The only scenario where we can have a *stall* is when the core has back-pressure from the LSU due to some pending operation on-the-fly. The micro-architecture is presented in the figure below with all the signals matching the top [rtl/nox.sv](rtl/nox.sv).
+NoX core is a **4-stages** single issue, in-order pipeline with [**full bypass**](https://en.wikipedia.org/wiki/Classic_RISC_pipeline#Solution_A._Bypassing). Most data hazards are resolved by forwarding with no stall penalty. Stalls occur in three cases: (1) load-use hazard — 1 cycle when a load result is consumed by the immediately following instruction; (2) multiply/divide — 2 cycles for MUL, 33 cycles for DIV/REM; (3) LSU back-pressure from an in-flight AXI transaction. The pipeline also includes a speculative branch predictor (64-entry BTB + 64-entry bimodal BHT + 4-entry RAS) to reduce the branch misprediction penalty to 2 cycles. The micro-architecture is presented in the figure below with all the signals matching the top [rtl/nox.sv](rtl/nox.sv).
 ![NoX uArch](docs/img/nox_diagram.svg)
 In the file [rtl/inc/nox_pkg.svh](rtl/inc/nox_pkg.svh), there are two presets of `verilog` macros (Lines 8/9) that can be un/commented depending on the final target. For `TARGET_FPGA`, it is defined an **active-low** & **synchronous reset**. Otherwise, if the macro `TARGET_ASIC` is defined, then this change to **active-high** & **asynchronous reset**. In case it is required another combination of both, please follow what is coded there.
 
-As an estimative of resources utilization, listed below are the synthesis numbers of the design for the [Kintex 7 K325T](https://www.xilinx.com/support/documentation/data_sheets/ds182_Kintex_7_Data_Sheet.pdf) (`xc7k325tffg676-1`) @100MHz using Vivado 2020.2.
+As an estimative of resources utilization, listed below are the synthesis numbers of the **original RV32I core** for the [Kintex 7 K325T](https://www.xilinx.com/support/documentation/data_sheets/ds182_Kintex_7_Data_Sheet.pdf) (`xc7k325tffg676-1`) @100MHz using Vivado 2020.2. These figures predate the branch predictor and RV32M additions and are provided for reference only.
 
 | **Name**                           | **Slice LUTs** | **Slice Registers** | **F7 Muxes** | **F8 Muxes** | **Slice** | **LUT as Logic** |
 |------------------------------------|:--------------:|:-------------------:|:------------:|:------------:|:---------:|:----------------:|
@@ -238,6 +238,7 @@ Correct operation validated. See README.md for run and reporting rules.
 ```
 
 CoreMark/MHz = 1,500,000,000 / 605,144,165 = **2.479 CM/MHz** at 300 MHz.
+
 ## <a name="synth"></a> Synthesis
 
 Adapting the setup to [Ibex Core - low risc](https://github.com/lowRISC/ibex/tree/master/syn), attached is the command to perform synthesis on the 45nm nangate PDK.
@@ -245,7 +246,10 @@ Adapting the setup to [Ibex Core - low risc](https://github.com/lowRISC/ibex/tre
 docker run  -v .:/test -w /test --rm aignacio/oss_cad_suite:latest bash -c "cd /test/synth && ./syn_yosys.sh"
 ```
 
-### Area results:
+### Area results (NanGate 45nm, current RV32IM core):
+* 22225.9 µm², 14022 cells, ~1917 FFs @ 300 MHz (Yosys + OpenSTA, all timing paths met, WNS +1.03 ns reg2reg)
+
+Original RV32I baseline (pre-AI-improvements):
 * 27.04 kGE @ 250MHz in 45nm
 
 ```bash
@@ -266,7 +270,7 @@ The following improvements were made to the core with AI assistance (Claude Sonn
 - **ALU forwarding mux** (`rtl/execute.sv`): merged a two-level mux (case + override) into a single priority-if/case, reducing the critical-path mux depth.
 - **Word-load early return** (`rtl/wb.sv`): word loads (`RV_LSU_W`) bypass the barrel-shifter entirely since `addr[1:0]` is always zero, removing the shift-mux tree from the load-use forwarding path.
 - **False-path STA constraint** (`synth/nox.nangate.sdc`): the AXI read-data → AXI write-address combinational path is a false path because `load_use_hazard` inserts a bubble before any dependent store can issue.
-- **Register file write-through priority fix** (`rtl/rtl/register_file.sv`): write-through now correctly overrides the hold path during load-use stalls instead of the reverse.
+- **Register file write-through priority fix** (`rtl/register_file.sv`): write-through now correctly overrides the hold path during load-use stalls instead of the reverse.
 - **Fetch deadlock fix** (`rtl/fetch.sv`): `data_ready` is asserted even when the L0 FIFO is full during a jump, preventing the fetch FSM from getting permanently stuck in `F_CLR`.
 - **Decode write-through address fix** (`rtl/decode.sv`): during a load-use stall, the register file read addresses now use `id_ex_ff.rs1_addr`/`rs2_addr` (the stalled instruction's registers) instead of the next instruction's registers, ensuring the loaded value reaches the correct operand.
 
