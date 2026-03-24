@@ -146,12 +146,17 @@ module fetch
           next_pc_buff = pc_addr_ff;
           valid_txn_i  = 1'b0;
 
-          if ((req_ff && ~addr_ready) || (next_ot > 'd0)) begin
+          if (req_ff && ~addr_ready) begin
+            // P5: Only enter F_CLR when an address beat is still pending —
+            // must keep driving the address until AXI acknowledges it.
             next_st    = F_CLR;
-          end
-
-          if (req_ff && addr_ready) begin
-            valid_addr = 1'b0;
+          end else begin
+            // P5: Address channel is idle or completes this cycle.
+            // Any in-flight data beats drain naturally: clear_fifo flushed
+            // the OT FIFO so returning beats have no OT entry and are
+            // discarded without stalling.  Issue the jump target now,
+            // saving one redirect bubble vs. waiting in F_CLR.
+            valid_addr = 1'b1;
           end
         end
 
@@ -160,15 +165,18 @@ module fetch
         end
       end
       F_CLR: begin
-        // After a jump request:
-        //  - Finish ongoing txn
+        // P5: Reached only when the address channel was still pending at
+        // jump time.  Keep driving the pre-jump address (pc_buff_ff, via
+        // the rd_addr mux) until AXI accepts it (valid_txn_i=0 marks it
+        // as discard).  Once accepted, immediately issue the jump target —
+        // no need to wait for in-flight data since the OT FIFO was cleared
+        // and returning beats are silently discarded.
         valid_txn_i = 1'b0;
         if (req_ff && ~addr_ready) begin
-          valid_addr  = 1'b1;
-        end
-        else if (next_ot == '0) begin
+          valid_addr  = 1'b1;  // keep driving old address until accepted
+        end else begin
           next_st    = F_REQ;
-          valid_addr = 1'b1; // Next txn is the jump
+          valid_addr = 1'b1;   // immediately issue jump target
         end
       end
       default: valid_addr = 1'b0;

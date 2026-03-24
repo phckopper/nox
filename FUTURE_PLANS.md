@@ -24,7 +24,28 @@ Branch mispredictions are now the clear dominant bottleneck (~10.6% of all cycle
 JALR redirects are near-zero thanks to the RAS — down from ~9.5M projected cycles
 without RAS to ~0.8M with it. Load-use stalls are minor at 1.4%.
 
-**Next target: P5 (eliminate F_CLR, reduce mispredict penalty 3→2 cycles)**
+**Next target: P5b (increase L0_BUFFER_SIZE 2→4) or P4 (push to 400 MHz)**
+
+### After P5 (2026-03-24) — eliminate F_CLR state (reduce mispredict penalty 3→2 cycles)
+- **CoreMark/MHz: 1.025** (+5.2% vs P2+P3, +12.8% vs baseline), crcfinal=0xa14c ✓
+- **IPC ≈ 0.829** (~405M instructions / 488M cycles, +13.5% vs baseline)
+- Total ticks: 487,607,017 (vs 513,409,720 P2+P3, vs 549,990,280 baseline)
+- Validation run (600 iter) in progress to confirm EEMBC ≥10s requirement
+
+#### P5 stall breakdown (700M cycle window, includes post-CoreMark loop):
+| Source | Count | Est. cycles lost |
+|--------|-------|-----------------|
+| Fetch bubbles (total) | 81.3M cycles | **11.6%** of all cycles |
+| — Branch mispredictions | 24.8M events × ~2 cyc | ~49.6M (reduced from ~3 cyc) |
+| — JAL BTB misses | 780K events × ~2 cyc | ~1.6M |
+| — JALR redirects | 268K events × ~2 cyc | ~0.5M |
+| Load-use stalls | 9.9M cycles | **1.4%** |
+
+Misprediction penalty reduced from ~3 to ~2 cycles by eliminating the F_CLR state.
+Fetch bubbles dropped from 15.3% (P2+P3) to 11.6% — a 3.7 percentage-point reduction.
+Branch mispredictions remain the dominant bottleneck, but each now costs 2 cycles instead of 3.
+
+**Remaining high-value opportunities: P4 (push to 400 MHz, +33% raw score) or P5b (L0_BUFFER_SIZE 2→4)**
 
 ---
 
@@ -119,29 +140,20 @@ attention first.
 
 Expected gain: **+33% raw CoreMark score** (CM/MHz unchanged).
 
-### P5 — Reduce misprediction penalty from 3 to 2 cycles
+### P5 — Reduce misprediction penalty from 3 to 2 cycles ✅ DONE (2026-03-24)
 **Files:** `rtl/fetch.sv`, `rtl/execute.sv`
+**Actual gain: +5.2% CM/MHz** (0.974 → 1.025; predicted +3–5%)
 
-Currently the pipeline takes 3 cycles to redirect after a misprediction (detect in EX
-→ F_CLR → new fetch begins). The F_CLR state exists to drain in-flight AXI
-transactions before the OT/L0 FIFOs are cleared and the new fetch address is issued.
-The 3-cycle sequence is:
-- Cycle 1: execute detects mispredict, fires `fetch_req_i`
-- Cycle 2: fetch in F_CLR, draining outstanding AXI transaction(s)
-- Cycle 3: fetch fires new address request to AXI
-- Cycle 4: instruction arrives, pipeline resumes
+Implementation: F_CLR is only entered when `req_ff && ~addr_ready` (address channel
+still pending). In all other cases (addr idle or accepted this cycle), execute immediately
+issues the new PC — saving one redirect bubble. Old in-flight data beats are silently
+discarded because `clear_fifo=fetch_req_i` empties the OT FIFO before their response
+arrives, so there is no valid OT entry to match and they are dropped.
 
-To eliminate F_CLR: assert `rd_ready=1` on the redirect cycle so the in-flight data
-beat completes immediately and is discarded, then clear the FIFOs and issue the new
-address in the same cycle — skipping F_CLR entirely. Requires careful verification
-that the OT/L0 FIFO clear does not corrupt a data beat arriving on the redirect cycle.
+Key insight: the original F_CLR drained every redirect through an extra cycle even when
+the address channel was already idle. Now only the rare case (addr pending) enters F_CLR.
 
-Fetch bubbles are the dominant stall source. From P1 perf data (hello_world, 2M
-cycles): ~61% of fetch bubbles are caused by misprediction/redirect penalties
-(branch mispredictions + JALR redirects + JAL BTB misses). This is the highest-value
-remaining optimization.
-
-Expected gain: **+3–5% CM/MHz**.
+Result: fetch bubbles fell from 15.3% → 11.6% of cycles in the 700M cycle window.
 
 ### P5b — Increase L0_BUFFER_SIZE from 2 to 4
 **File:** `rtl/fetch.sv` (parameter only — no logic changes)
