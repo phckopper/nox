@@ -188,14 +188,53 @@ module execute
       RV_F3_ADD_SUB:  res = (id_ex_i.f7 == RV_F7_1) ? op1 - op2 : op1 + op2;
 
       // funct3=001 (SLL/SLLI): also sext.b (funct7=0110000,shamt=00100)
-      //                         and sext.h (funct7=0110000,shamt=00101)  [Zbb]
+      //                         and sext.h (funct7=0110000,shamt=00101) [Zbb]
+      //                         clz (funct7=0110000,shamt=00000)        [Zbb]
+      //                         ctz (funct7=0110000,shamt=00001)        [Zbb]
+      //                         cpop (funct7=0110000,shamt=00010)       [Zbb]
+      //                         rol (funct7=0110000) OP binary          [Zbb]
       RV_F3_SLL: begin
-        if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0100)
+        if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0100) begin
           res = {{24{op1[7]}},  op1[7:0]};       // sext.b
-        else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0101)
+        end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0101) begin
           res = {{16{op1[15]}}, op1[15:0]};      // sext.h
-        else
+        end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0000) begin
+          // clz: count leading zeros
+          begin
+            logic [5:0] clz_n;
+            clz_n = 6'd32;
+            for (int ci = 31; ci >= 0; ci--) begin
+              if (op1[ci] && (clz_n == 6'd32)) clz_n = 6'(31 - ci);
+            end
+            res = alu_t'(clz_n);
+          end
+        end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0001) begin
+          // ctz: count trailing zeros
+          begin
+            logic [5:0] ctz_n;
+            ctz_n = 6'd32;
+            for (int ci = 0; ci <= 31; ci++) begin
+              if (op1[ci] && (ctz_n == 6'd32)) ctz_n = 6'(ci);
+            end
+            res = alu_t'(ctz_n);
+          end
+        end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0010) begin
+          // cpop: population count
+          begin
+            logic [5:0] pop_n;
+            pop_n = 6'd0;
+            for (int ci = 0; ci <= 31; ci++) begin
+              if (op1[ci]) pop_n = pop_n + 6'd1;
+            end
+            res = alu_t'(pop_n);
+          end
+        end else if (id_ex_i.funct7_raw == 7'b011_0000) begin
+          // rol: rotate left (OP binary, op2 is rs2)
+          res = (op2[4:0] == 5'b0) ? op1 :
+                ((op1 << op2[4:0]) | (op1 >> (6'd32 - {1'b0, op2[4:0]})));
+        end else begin
           res = op1 << op2[4:0];                 // SLL / SLLI
+        end
       end
 
       // funct3=010 (SLT): also sh1add (funct7=0010000)  [Zba]
@@ -221,11 +260,29 @@ module execute
         endcase
       end
 
-      // funct3=101 (SRL/SRA): minu (0000101), czero.eqz (0000111)  [Zbb/Zicond]
+      // funct3=101 (SRL/SRA): minu (0000101), czero.eqz (0000111) [Zbb/Zicond]
+      //                        ror/rori (0110000) [Zbb]
+      //                        orc.b (0010100,shamt=00111) [Zbb]
+      //                        rev8 (0110101,shamt=11000)  [Zbb]
       RV_F3_SRL_SRA: begin
         case (id_ex_i.funct7_raw)
           7'b000_0101: res = (op1 < op2) ? op1 : op2;       // minu   [Zbb]
           7'b000_0111: res = (op2 == '0) ? '0 : op1;        // czero.eqz [Zicond]
+          7'b011_0000: begin
+            // ror / rori: rotate right; op2[4:0] is the shift amount
+            res = (op2[4:0] == 5'b0) ? op1 :
+                  ((op1 >> op2[4:0]) | (op1 << (6'd32 - {1'b0, op2[4:0]})));
+          end
+          7'b010_1000: begin
+            // orc.b (funct7=0x28, shamt=0x07): OR-combine bytes
+            // Each byte becomes 0xFF if any bit set, else 0x00
+            res = { {8{|op1[31:24]}}, {8{|op1[23:16]}},
+                    {8{|op1[15:8]}},  {8{|op1[7:0]}}  };
+          end
+          7'b011_0101: begin
+            // rev8 (funct7=0x35, shamt=0x18): byte-reverse (endian swap)
+            res = {op1[7:0], op1[15:8], op1[23:16], op1[31:24]};
+          end
           default:     res = (id_ex_i.rshift == RV_SRA) ?
                              signed'((signed'(op1) >>> op2[4:0])) :
                              (op1 >> op2[4:0]);              // SRL/SRA

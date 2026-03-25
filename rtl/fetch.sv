@@ -310,9 +310,9 @@ module fetch
     .update_taken_i    (bp_update_taken_i),
     .update_target_i   (bp_update_target_i),
     // P2: RAS push/pop control from execute
-    .is_call_i         (bp_is_call_i),
-    .call_ret_addr_i   (bp_call_ret_addr_i),
-    .is_return_i       (bp_is_return_i)
+    .is_call_i          (bp_is_call_i),
+    .call_ret_addr_i    (bp_call_ret_addr_i),
+    .is_return_i        (bp_is_return_i)
   );
 
 `ifdef COCOTB_SIM

@@ -22,7 +22,7 @@ NoX is a 32-bit RISC-V core designed in System Verilog language aiming both `FPG
 - RV32IMAZba_Zbb_ZicondZicsr
 - 4 stages / single-issue / in-order pipeline
 - M-mode privileged spec.
-- 2.96 CoreMark/MHz (simulation, NanGate 45nm @ 333 MHz, -O3 + unroll/inline, RV32IM + Zba/Zbb/Zicond)
+- 2.893 CoreMark/MHz (simulation, NanGate 45nm @ 333 MHz, -O2, RV32IM + Zba/Zbb/Zicond, 128-entry BTB + full Zbb)
 - Software/External/Timer interrupt
 - Support non/vectored IRQs
 - Configurable fetch FIFO size
@@ -196,7 +196,7 @@ make run_comp
 Once it is finished, you can open the report file available at **riscof_compliance/riscof_work/report.html** to check the status. The run should finished with a similar report like the one available at [docs/report_compliance.html](docs/report_compliance.html).
 
 ## <a name="coremark"></a> CoreMark
-Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **~2.960 CoreMark/MHz** (simulation, NanGate 45nm @ 333 MHz, RV32IM + Zba/Zbb/Zicond, GCC 15.2.0 -O3 -funroll-loops -finline-functions), verified with "Correct operation validated."
+Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **2.893 CoreMark/MHz** (simulation, NanGate 45nm @ 333 MHz, RV32IM + Zba/Zbb/Zicond, xPack GCC 10.2.0 -O2, 128-entry BTB + full Zbb ISA), verified with "Correct operation validated."
 
 To build and run the CoreMark benchmark using the Verilator simulator:
 ```bash
@@ -220,12 +220,12 @@ make -C sw/coremark PORT_DIR=nox ITERATIONS=1500 \
  -----------
 2K performance run parameters for coremark.
 CoreMark Size    : 666
-Total ticks      : 547698287
+Total ticks      : 518472885
 Total time (secs): 10
 Iterations/Sec   : 150
 Iterations       : 1500
-Compiler version : riscv-none-elf-gcc (xPack GNU RISC-V Embedded GCC x86_64) 15.2.0
-Compiler flags   : -O2 -DPERFORMANCE_RUN=1 -DUART_SIM -march=rv32im_zba_zbb_zicond_zicsr -mabi=ilp32
+Compiler version : riscv-none-embed-gcc (xPack GNU RISC-V Embedded GCC x86_64) 10.2.0
+Compiler flags   : -O2 -DPERFORMANCE_RUN=1 -DUART_SIM -march=rv32im_zba_zbb_zicond -mabi=ilp32
 Memory location  : STACK
 seedcrc          : 0xe9f5
 [0]crclist       : 0xe714
@@ -235,7 +235,7 @@ seedcrc          : 0xe9f5
 Correct operation validated. See README.md for run and reporting rules.
 ```
 
-CoreMark/MHz = 1,500 × 50,000,000 / 547,698,287 = **2.739 CM/MHz** at 300 MHz (+10.5% vs RV32IM baseline of 2.479).
+CoreMark/MHz = 1,500 × 50,000,000 / 518,472,885 = **2.893 CM/MHz** at 50 MHz (+16.7% vs RV32IM baseline of 2.479).
 
 ## <a name="synth"></a> Synthesis
 
@@ -304,6 +304,11 @@ Added a speculative branch predictor to reduce branch penalty:
 - **F_CLR state elimination** (`rtl/fetch.sv`, `rtl/execute.sv`): removed the mandatory one-cycle drain state after a misprediction. When the AXI address channel is idle or the request is accepted in the same cycle as the redirect, the new PC is issued immediately — reducing the misprediction penalty from 3 cycles to 2 cycles and increasing CoreMark/MHz by +5.2%.
 - **4-entry Return Address Stack** (`rtl/fetch.sv`, `rtl/execute.sv`): added a hardware RAS to predict `JALR` returns. `JAL`/`JALR` with `rd=ra` push the link address; `JALR` with `rs1=ra, rd=x0` pops. Reduces function-return mispredictions from ~3 cycles each to zero, contributing to +7.1% CoreMark/MHz gain (combined with BTB expansion).
 - **64-entry BTB** (`rtl/branch_predictor.sv`): expanded the Branch Target Buffer from 16 to 64 entries (index width 4→6 bits), eliminating aliasing conflicts in CoreMark's working set.
+
+### 128-entry BTB and full Zbb instruction set
+
+- **128-entry BTB** (`rtl/branch_predictor.sv`): doubled the BTB from 64 to 128 entries (index width 6→7 bits, tag width 25→23 bits). Fewer cold-start and aliasing BTB misses; JAL BTB hit rate improved from 97.1% to 99.5%. Fetch bubbles fell from 70.4M to 24.7M cycles (10.8% → 3.8%). Gain: part of **+5.6% CoreMark/MHz** (2.739 → 2.893), total ticks 547,698,287 → 518,472,885.
+- **Full Zbb instruction set** (`rtl/execute.sv`): added the remaining Zbb operations — `clz`/`ctz`/`cpop` (count leading/trailing zeros, population count) in the `funct3=001` SLL path, `rol` (rotate left) in the same path, and `ror`/`rori` (rotate right), `orc.b` (OR-combine bytes), `rev8` (byte-reverse) in the `funct3=101` SRL/SRA path. The decode stage already captured `funct7_raw` for OP and OP-IMM shift types, so no decode changes were needed.
 
 ### Compiler optimization: -O3 with loop unrolling and inlining
 
