@@ -22,7 +22,7 @@ NoX is a 32-bit RISC-V core designed in System Verilog language aiming both `FPG
 - RV32IMAZba_Zbb_ZicondZicsr
 - 4 stages / single-issue / in-order pipeline
 - M-mode privileged spec.
-- 2.87 CoreMark/MHz (simulation, NanGate 45nm @ 333 MHz, -O2, RV32IM + Zba/Zbb/Zicond)
+- 2.96 CoreMark/MHz (simulation, NanGate 45nm @ 333 MHz, -O3 + unroll/inline, RV32IM + Zba/Zbb/Zicond)
 - Software/External/Timer interrupt
 - Support non/vectored IRQs
 - Configurable fetch FIFO size
@@ -196,7 +196,7 @@ make run_comp
 Once it is finished, you can open the report file available at **riscof_compliance/riscof_work/report.html** to check the status. The run should finished with a similar report like the one available at [docs/report_compliance.html](docs/report_compliance.html).
 
 ## <a name="coremark"></a> CoreMark
-Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **~2.873 CoreMark/MHz** (simulation, NanGate 45nm @ 333 MHz, RV32IM + Zba/Zbb/Zicond, -O2), verified with "Correct operation validated."
+Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **~2.960 CoreMark/MHz** (simulation, NanGate 45nm @ 333 MHz, RV32IM + Zba/Zbb/Zicond, GCC 15.2.0 -O3 -funroll-loops -finline-functions), verified with "Correct operation validated."
 
 To build and run the CoreMark benchmark using the Verilator simulator:
 ```bash
@@ -293,16 +293,21 @@ Added a speculative branch predictor to reduce branch penalty:
 - **`jump_or_branch` guard relaxation** (`rtl/execute.sv`): introduced `no_jump_guard` so that a branch or jump in the cycle immediately after a correctly-predicted jump is not incorrectly suppressed.
 - **Mispredicted not-taken branch suppression** (`rtl/execute.sv`): extended the `we_rd = 0` squash logic to cover the case where a branch was predicted taken but resolved not-taken, preventing wrong-path instructions from corrupting the register file.
 
-### Fetch FIFO and simulation performance counters
+### Fetch FIFO, performance counters, and BHT improvements
 
 - **Fetch FIFO doubled** (`rtl/nox.sv`): `L0_BUFFER_SIZE` increased from 2 to 4 entries. The larger buffer absorbs post-redirect refill latency, reducing fetch bubbles from 8.2% to 4.2% of cycles. Gain: **+4.9% CoreMark/MHz** (2.739 → ~2.873), with total ticks dropping from 547,698,287 to 522,034,501.
-- **Performance counters** (`rtl/execute.sv`, `ifdef SIMULATION`): 15-counter set printed at simulation end — IPC, stall breakdown (LSU back-pressure, load-use hazard, MulDiv stall, fetch bubbles), redirect events (branch mispredict, JAL BTB miss, JALR redirect) with estimated cycles-lost, and prediction success rates for branches, JAL BTB hits, and JALR RAS/BTB hits.
+- **Performance counters** (`rtl/execute.sv`, `ifdef SIMULATION`): 15-counter set printed at simulation end — IPC, stall breakdown (LSU back-pressure, load-use hazard, MulDiv stall, fetch bubbles), redirect events (branch mispredict split into taken-miss and not-taken-miss, JAL BTB miss, JALR redirect) with estimated cycles-lost, and prediction success rates for branches (true accuracy, taken/not-taken split), JAL BTB hits, and JALR RAS/BTB hits.
+- **256-entry XOR-folded BHT** (`rtl/branch_predictor.sv`): expanded BHT from 64 to 256 entries and replaced the PC[7:2] index with a XOR-folded index `PC[9:2] ⊕ PC[17:10]` that mixes the intra-page offset with the page number, reducing inter-page aliasing. Not-taken-predicted mispredictions fell from ~3.5M to 3.07M. Branch true accuracy: 90.3% → 90.6%. Gain: **+0.1% CoreMark/MHz**.
 
 ### Fetch pipeline and branch predictor improvements
 
 - **F_CLR state elimination** (`rtl/fetch.sv`, `rtl/execute.sv`): removed the mandatory one-cycle drain state after a misprediction. When the AXI address channel is idle or the request is accepted in the same cycle as the redirect, the new PC is issued immediately — reducing the misprediction penalty from 3 cycles to 2 cycles and increasing CoreMark/MHz by +5.2%.
 - **4-entry Return Address Stack** (`rtl/fetch.sv`, `rtl/execute.sv`): added a hardware RAS to predict `JALR` returns. `JAL`/`JALR` with `rd=ra` push the link address; `JALR` with `rs1=ra, rd=x0` pops. Reduces function-return mispredictions from ~3 cycles each to zero, contributing to +7.1% CoreMark/MHz gain (combined with BTB expansion).
 - **64-entry BTB** (`rtl/branch_predictor.sv`): expanded the Branch Target Buffer from 16 to 64 entries (index width 4→6 bits), eliminating aliasing conflicts in CoreMark's working set.
+
+### Compiler optimization: -O3 with loop unrolling and inlining
+
+- **GCC 15.2.0 -O3 -funroll-loops -finline-functions** (`sw/coremark/`): rebuilt CoreMark with aggressive compiler optimizations. Loop unrolling converts predictable taken-loop-back-edges into cheaper not-taken exits, and inlining reduces call overhead. Load-use hazard cycles fell 16% (31M → 26.1M) as the compiler scheduled around more hazards with the larger optimization scope. A `#pragma GCC optimize("O2")` guard was added to `nox/startup.c` to prevent the BSS/data-copy loops in `_reset` (which lives in `.init`) from being unrolled past the 0x100-byte vector-table offset enforced by `sections.ld`. Gain: **+2.9% CoreMark/MHz** (~2.876 → ~2.960), total ticks 520,947,845 → 506,072,095.
 
 ### RV32A atomics extension
 

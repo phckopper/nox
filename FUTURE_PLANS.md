@@ -39,25 +39,33 @@ RV32A (atomics) has since been added; a re-synthesis run is pending.
 - **CoreMark/MHz: ~2.873** (+4.9% vs P8+P9+P10), crcfinal=0x25b5 ✓ (1500 iter)
 - Total ticks: 522,034,501 | Cycles/iteration: ~348,023
 
-### After P1+BHT improvements (2026-03-25) — 256-entry XOR-indexed BHT ← CURRENT BEST
+### After P1+BHT improvements (2026-03-25) — 256-entry XOR-indexed BHT
 - **CoreMark/MHz: ~2.876** (+0.1% vs P5b), crcfinal=0x25b5 ✓ (1500 iter)
 - Total ticks: 520,947,845 | Cycles/iteration: ~347,298
+
+### After O3+unroll+inline (2026-03-25) — GCC -O3 -funroll-loops -finline-functions ← CURRENT BEST
+- **CoreMark/MHz: ~2.960** (+2.9% vs BHT), crcfinal=0x25b5 ✓ (1500 iter)
+- Total ticks: 506,072,095 | Cycles/iteration: ~337,381
+- Built with GCC 15.2.0 (`-O3 -funroll-loops -finline-functions -march=rv32im_zba_zbb_zicond_zicsr`)
+- ELF: `sw/coremark/coremark_1500iter_O3_unroll_inline_rv32im_zba_zbb_zicond.elf`
 
 #### Current stall breakdown (1500-iter run, perf counters):
 | Source | Cycles | % of total |
 |--------|--------|-----------|
-| Load-use hazard | ~31M | **~4.8%** |
-| Fetch bubbles (total) | ~27M | **~4.1%** |
-| — Branch mispredictions | 7.48M × ~2 cyc | ~15M (2.3%) |
-| — JAL BTB misses | ~0.84M × ~2 cyc | ~1.7M (0.3%) |
-| — JALR redirects | ~0.57M × ~2 cyc | ~1.1M (0.2%) |
-| MulDiv stall | ~14M | **~2.2%** |
-| **IPC** | | **~0.870** |
+| Load-use hazard | 26.1M | **4.0%** |
+| Fetch bubbles (total) | 27.8M | **4.3%** |
+| — Branch mispredictions | 7.31M × ~2 cyc | ~14.6M (2.2%) |
+| — JAL BTB misses | 1.72M × ~2 cyc | ~3.4M (0.5%) |
+| — JALR redirects | 0.22M × ~2 cyc | ~0.4M (0.1%) |
+| MulDiv stall | 14.1M | **2.2%** |
+| **IPC** | | **0.874** |
 
-Branch prediction: **true accuracy 90.6%** (72.3M/79.8M) | taken accuracy 90.0% | taken 55% / not-taken 45%
-- Taken, not predicted: 4.41M (BTB miss or BHT counter<2) — data-dependent, near theoretical ceiling
-- Not-taken, predicted: 3.07M (BHT aliasing/slow decay) — reduced by XOR-folded indexing
-- JAL BTB hit rate: **99.4%** | JALR RAS hit rate: **82.3%**
+Branch prediction: **true accuracy 90.1%** (66.3M/73.6M) | taken accuracy 85.2% | taken 50% / not-taken 50%
+- Taken, not predicted: 5.42M — up vs O2 (loop unrolling creates BTB-cold branches at unrolled exits)
+- Not-taken, predicted: 1.89M — down vs O2 (less aliasing; fewer back-edge taken branches)
+- JAL BTB hit rate: **98.9%** (down from 99.4%; inlining creates more unique call sites)
+- JALR RAS hit rate: **89.3%** (up from 82.3%; inlining reduces call depth)
+- Load-use hazard down 16% (26.1M vs 31M) — compiler scheduled around more hazards with O3
 
 ---
 

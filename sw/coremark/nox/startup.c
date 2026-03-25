@@ -23,6 +23,9 @@
  * SOFTWARE.
  */
 
+/* Keep startup code compact — prevent O3/unroll from bloating .init past the
+ * vector-table offset (0x100) enforced by sections.ld. */
+#pragma GCC optimize("O2")
 #include <stdint.h>
 #include "riscv_csr_encoding.h"
 
@@ -46,7 +49,7 @@ static int initialized_variable_in_data = 42;
 static int toggle = 0;
 
 extern void irq_callback(void);
-extern void main(void);
+extern void __attribute__((noinline)) main(void);
 
 void __attribute__((section(".init"),naked)) _reset(void) {
     register uint32_t *src, *dst;
