@@ -536,21 +536,25 @@ module execute
   //   correct_jal       — JAL resolved with correct BTB prediction
   //   correct_jalr      — JALR resolved with correct RAS/BTB prediction
 
-  longint unsigned perf_cycles            = 0;
-  longint unsigned perf_instrs_issued     = 0; // instr enters execute (incl. wrong-path)
-  longint unsigned perf_lsu_stall         = 0; // AXI back-pressure cycles
-  longint unsigned perf_load_use          = 0; // load-use hazard cycles
-  longint unsigned perf_muldiv_stall      = 0; // MulDiv unit stall cycles
-  longint unsigned perf_fetch_bubble      = 0; // execute ready, decode empty
-  longint unsigned perf_branch_mispredict = 0; // branch misprediction events
-  longint unsigned perf_jal_btb_miss      = 0; // JAL BTB miss events
-  longint unsigned perf_jalr_redirect     = 0; // JALR redirect events
-  longint unsigned perf_correct_branch    = 0; // branch correctly predicted
-  longint unsigned perf_correct_jal       = 0; // JAL correctly predicted (BTB hit)
-  longint unsigned perf_correct_jalr      = 0; // JALR correctly predicted (RAS/BTB hit)
-  longint unsigned perf_branch_total      = 0; // all resolved branches
-  longint unsigned perf_jal_total         = 0; // all resolved JALs
-  longint unsigned perf_jalr_total        = 0; // all resolved JALRs
+  longint unsigned perf_cycles                    = 0;
+  longint unsigned perf_instrs_issued             = 0; // instr enters execute (incl. wrong-path)
+  longint unsigned perf_lsu_stall                 = 0; // AXI back-pressure cycles
+  longint unsigned perf_load_use                  = 0; // load-use hazard cycles
+  longint unsigned perf_muldiv_stall              = 0; // MulDiv unit stall cycles
+  longint unsigned perf_fetch_bubble              = 0; // execute ready, decode empty
+  // Branch misprediction breakdown:
+  //   taken_miss    = branch was taken but BHT/BTB predicted not-taken
+  //   not_taken_miss = branch was not taken but BHT predicted taken (BTB present)
+  longint unsigned perf_branch_taken_miss         = 0;
+  longint unsigned perf_branch_not_taken_miss     = 0;
+  longint unsigned perf_jal_btb_miss              = 0; // JAL BTB miss events
+  longint unsigned perf_jalr_redirect             = 0; // JALR redirect events
+  longint unsigned perf_branch_taken              = 0; // resolved taken branches
+  longint unsigned perf_branch_not_taken          = 0; // resolved not-taken branches
+  longint unsigned perf_jal_total                 = 0; // all resolved JALs
+  longint unsigned perf_jalr_total                = 0; // all resolved JALRs
+  longint unsigned perf_correct_jal               = 0; // JAL correctly predicted (BTB hit)
+  longint unsigned perf_correct_jalr              = 0; // JALR correctly predicted (RAS/BTB hit)
 
   always_ff @(posedge clk) begin
     if (rst) begin  // rst=1 = normal operation (active-low reset)
@@ -570,14 +574,19 @@ module execute
       else if (id_ready_o && ~id_valid_i)
         perf_fetch_bubble <= perf_fetch_bubble + 1;
 
-      // Branch events
+      // Branch events — split taken vs not-taken, and by mispredict type
       if (branch_ff.b_act) begin
-        perf_branch_total <= perf_branch_total + 1;
-        if ((branch_ff.take_branch && ~correct_branch_pred) ||
-            (~branch_ff.take_branch && bp_taken_for_branch_ff))
-          perf_branch_mispredict <= perf_branch_mispredict + 1;
-        else if (branch_ff.take_branch && correct_branch_pred)
-          perf_correct_branch    <= perf_correct_branch    + 1;
+        if (branch_ff.take_branch) begin
+          perf_branch_taken <= perf_branch_taken + 1;
+          // Taken but predicted not-taken (BTB miss or BHT counter < 2)
+          if (~correct_branch_pred)
+            perf_branch_taken_miss <= perf_branch_taken_miss + 1;
+        end else begin
+          perf_branch_not_taken <= perf_branch_not_taken + 1;
+          // Not-taken but predicted taken (BHT counter >= 2 + BTB present)
+          if (bp_taken_for_branch_ff)
+            perf_branch_not_taken_miss <= perf_branch_not_taken_miss + 1;
+        end
       end
 
       // Jump events
@@ -601,11 +610,20 @@ module execute
 
   final begin
     // Derived quantities
+    automatic longint unsigned branch_total =
+        perf_branch_taken + perf_branch_not_taken;
+    automatic longint unsigned branch_mispredict =
+        perf_branch_taken_miss + perf_branch_not_taken_miss;
     automatic longint unsigned redirect_cyc =
-        (perf_branch_mispredict + perf_jal_btb_miss + perf_jalr_redirect) * 2;
-    automatic real branch_pred_rate =
-        (perf_branch_total > 0)
-            ? 100.0 * perf_correct_branch / perf_branch_total : 0.0;
+        (branch_mispredict + perf_jal_btb_miss + perf_jalr_redirect) * 2;
+    // True prediction accuracy: fraction of branches that did NOT cause a redirect
+    automatic real branch_acc =
+        (branch_total > 0)
+            ? 100.0 * (branch_total - branch_mispredict) / branch_total : 0.0;
+    // Taken-branch prediction rate: taken branches correctly predicted as taken
+    automatic real taken_acc =
+        (perf_branch_taken > 0)
+            ? 100.0 * (perf_branch_taken - perf_branch_taken_miss) / perf_branch_taken : 0.0;
     automatic real jal_hit_rate =
         (perf_jal_total > 0)
             ? 100.0 * perf_correct_jal    / perf_jal_total    : 0.0;
@@ -630,18 +648,27 @@ module execute
              perf_muldiv_stall, 100.0 * perf_muldiv_stall / perf_cycles);
     $display("[PERF]  Fetch bubbles            : %0d  (%0.1f%%)",
              perf_fetch_bubble, 100.0 * perf_fetch_bubble / perf_cycles);
-    $display("[PERF] ----- Redirects (~2 cyc penalty each) -----------------");
-    $display("[PERF]  Branch mispredicts       : %0d events  (~%0d cyc lost)",
-             perf_branch_mispredict, perf_branch_mispredict * 2);
-    $display("[PERF]  JAL BTB misses           : %0d events  (~%0d cyc lost)",
-             perf_jal_btb_miss,      perf_jal_btb_miss      * 2);
-    $display("[PERF]  JALR redirects           : %0d events  (~%0d cyc lost)",
-             perf_jalr_redirect,     perf_jalr_redirect     * 2);
+    $display("[PERF] ----- Branch mispredictions (~2 cyc penalty each) -----");
+    $display("[PERF]  Taken, not predicted     : %0d  (BTB miss or BHT counter<2)",
+             perf_branch_taken_miss);
+    $display("[PERF]  Not-taken, predicted     : %0d  (BHT aliasing or slow decay)",
+             perf_branch_not_taken_miss);
+    $display("[PERF]  Total branch mispredict  : %0d  (~%0d cyc lost)",
+             branch_mispredict, branch_mispredict * 2);
+    $display("[PERF]  JAL BTB misses           : %0d  (~%0d cyc lost)",
+             perf_jal_btb_miss, perf_jal_btb_miss * 2);
+    $display("[PERF]  JALR redirects           : %0d  (~%0d cyc lost)",
+             perf_jalr_redirect, perf_jalr_redirect * 2);
     $display("[PERF]  Total redirect est.      : ~%0d cyc  (%0.1f%%)",
              redirect_cyc, 100.0 * redirect_cyc / perf_cycles);
-    $display("[PERF] ----- Prediction rates -----------------------------------");
-    $display("[PERF]  Branch pred rate         : %0d/%0d  (%0.1f%%)",
-             perf_correct_branch, perf_branch_total, branch_pred_rate);
+    $display("[PERF] ----- Prediction accuracy ------------------------------------");
+    $display("[PERF]  Branch true accuracy     : %0d/%0d  (%0.1f%%)",
+             branch_total - branch_mispredict, branch_total, branch_acc);
+    $display("[PERF]  Branch taken accuracy    : %0d/%0d  (%0.1f%%)",
+             perf_branch_taken - perf_branch_taken_miss, perf_branch_taken, taken_acc);
+    $display("[PERF]    (taken %0d / not-taken %0d = %0.0f%%/%0.0f%% of all branches)",
+             perf_branch_taken, perf_branch_not_taken,
+             100.0*perf_branch_taken/branch_total, 100.0*perf_branch_not_taken/branch_total);
     $display("[PERF]  JAL BTB hit rate         : %0d/%0d  (%0.1f%%)",
              perf_correct_jal,    perf_jal_total,    jal_hit_rate);
     $display("[PERF]  JALR RAS/BTB hit rate    : %0d/%0d  (%0.1f%%)",

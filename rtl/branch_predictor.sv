@@ -15,7 +15,12 @@
  *       Each entry also carries an `is_return` flag set when execute
  *       identifies a JALR return (rs1=x1) at that PC.
  *
- * BHT:  64 entries of 2-bit saturating counters, indexed by PC[7:2].
+ * BHT:  256 entries of 2-bit saturating counters (was 64).
+ *       Index = XOR-folded PC bits: PC[IDX_W+1:2] XOR PC[IDX_W*2+1:IDX_W+2].
+ *       For 256 entries (IDX_W=8): PC[9:2] XOR PC[17:10].
+ *       XOR folding mixes the intra-page offset with the page number, reducing
+ *       aliasing between branches that happen to share the same lower PC bits
+ *       but live in different 1KB pages of the code region.
  *       MSB == 1  →  predict taken.
  *       Initial state: weakly not-taken (2'b01) so loops warm up quickly
  *       without causing mispredictions on cold non-loop branches.
@@ -38,7 +43,7 @@ module branch_predictor
   import nox_utils_pkg::*;
 #(
   parameter int BTB_ENTRIES = 64,   // P3: was 16; must be a power of two
-  parameter int BHT_ENTRIES = 64,   // must be a power of two
+  parameter int BHT_ENTRIES = 256,  // was 64; 256×2-bit = 512 bits, negligible area
   parameter int RAS_ENTRIES = 4     // P2: return address stack depth
 )(
   input  logic  clk,
@@ -82,7 +87,12 @@ module branch_predictor
   btb_entry_t btb_ff [BTB_ENTRIES];
 
   // ── BHT storage ──────────────────────────────────────────────────────
-  localparam int BHT_IDX_W = $clog2(BHT_ENTRIES);       // 6
+  localparam int BHT_IDX_W  = $clog2(BHT_ENTRIES);      // 8 for 256 entries
+  // XOR-folded index bit positions (constants for Verilator compatibility)
+  localparam int BHT_IDX_LO = 2;
+  localparam int BHT_IDX_HI = BHT_IDX_W + 1;           // 9
+  localparam int BHT_XOR_LO = BHT_IDX_W + 2;           // 10
+  localparam int BHT_XOR_HI = BHT_IDX_W * 2 + 1;       // 17
 
   logic [1:0] bht_ff [BHT_ENTRIES];
 
@@ -100,7 +110,10 @@ module branch_predictor
 
   assign btb_q_idx  = fetch_pc_i[BTB_IDX_W+1:2];
   assign btb_q_tag  = fetch_pc_i[31:BTB_IDX_W+2];
-  assign bht_q_idx  = fetch_pc_i[BHT_IDX_W+1:2];
+  // XOR-folded BHT index: mixes intra-page offset (PC[IDX_HI:IDX_LO]) with
+  // page number (PC[XOR_HI:XOR_LO]) to reduce inter-page aliasing.
+  assign bht_q_idx  = BHT_IDX_W'(fetch_pc_i[BHT_IDX_HI:BHT_IDX_LO] ^
+                                  fetch_pc_i[BHT_XOR_HI:BHT_XOR_LO]);
 
   assign btb_hit    = btb_ff[btb_q_idx].valid &&
                       (btb_ff[btb_q_idx].tag == btb_q_tag);
@@ -125,12 +138,14 @@ module branch_predictor
   logic [BHT_IDX_W-1:0] bht_u_idx;
 
   assign btb_u_idx = update_pc_i[BTB_IDX_W+1:2];
-  assign bht_u_idx = update_pc_i[BHT_IDX_W+1:2];
+  assign bht_u_idx = BHT_IDX_W'(update_pc_i[BHT_IDX_HI:BHT_IDX_LO] ^
+                                 update_pc_i[BHT_XOR_HI:BHT_XOR_LO]);
 
   `CLK_PROC(clk, rst) begin
     `RST_TYPE(rst) begin
       for (int i = 0; i < BTB_ENTRIES; i++) btb_ff[i] <= '0;
-      for (int i = 0; i < BHT_ENTRIES; i++) bht_ff[i] <= 2'b01;  // weakly not-taken
+      // Blocking = required: Verilator rejects <= in for-loops above ~64 entries
+      for (int i = 0; i < BHT_ENTRIES; i++) bht_ff[i] = 2'b01;  // weakly not-taken
       for (int i = 0; i < RAS_ENTRIES; i++) ras_ff[i] <= '0;
       ras_ptr_ff <= '0;
     end
