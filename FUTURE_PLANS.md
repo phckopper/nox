@@ -35,22 +35,29 @@ RV32A (atomics) has since been added; a re-synthesis run is pending.
 - Cycles/iteration: 365,132 | Total ticks: 547,698,287
 - Built with GCC 15.2.0 (`-march=rv32im_zba_zbb_zicond_zicsr -O2`)
 
-### After P5b (2026-03-25) — fetch FIFO 2→4 entries ← CURRENT BEST
+### After P5b (2026-03-25) — fetch FIFO 2→4 entries
 - **CoreMark/MHz: ~2.873** (+4.9% vs P8+P9+P10), crcfinal=0x25b5 ✓ (1500 iter)
 - Total ticks: 522,034,501 | Cycles/iteration: ~348,023
 
-#### Current stall breakdown (650M cycle window, 1500-iter run, perf counters):
+### After P1+BHT improvements (2026-03-25) — 256-entry XOR-indexed BHT ← CURRENT BEST
+- **CoreMark/MHz: ~2.876** (+0.1% vs P5b), crcfinal=0x25b5 ✓ (1500 iter)
+- Total ticks: 520,947,845 | Cycles/iteration: ~347,298
+
+#### Current stall breakdown (1500-iter run, perf counters):
 | Source | Cycles | % of total |
 |--------|--------|-----------|
-| Load-use hazard | 31.0M | **4.8%** |
-| Fetch bubbles (total) | 27.3M | **4.2%** |
-| — Branch mispredictions | 7.7M × ~2 cyc | ~15.4M (2.4%) |
-| — JAL BTB misses | 0.84M × ~2 cyc | ~1.7M (0.3%) |
-| — JALR redirects | 0.57M × ~2 cyc | ~1.1M (0.2%) |
-| MulDiv stall | 14.1M | **2.2%** |
-| **IPC** | | **0.867** |
+| Load-use hazard | ~31M | **~4.8%** |
+| Fetch bubbles (total) | ~27M | **~4.1%** |
+| — Branch mispredictions | 7.48M × ~2 cyc | ~15M (2.3%) |
+| — JAL BTB misses | ~0.84M × ~2 cyc | ~1.7M (0.3%) |
+| — JALR redirects | ~0.57M × ~2 cyc | ~1.1M (0.2%) |
+| MulDiv stall | ~14M | **~2.2%** |
+| **IPC** | | **~0.870** |
 
-Prediction rates: branch **49.7%** (data-dependent, near-random) | JAL BTB **99.4%** | JALR RAS **82.3%**
+Branch prediction: **true accuracy 90.6%** (72.3M/79.8M) | taken accuracy 90.0% | taken 55% / not-taken 45%
+- Taken, not predicted: 4.41M (BTB miss or BHT counter<2) — data-dependent, near theoretical ceiling
+- Not-taken, predicted: 3.07M (BHT aliasing/slow decay) — reduced by XOR-folded indexing
+- JAL BTB hit rate: **99.4%** | JALR RAS hit rate: **82.3%**
 
 ---
 
@@ -129,8 +136,33 @@ Expected simulation gain: **+2–4%** (BTB). Expected FPGA/silicon gain: **+8–
 
 15 counters printed at simulation end: IPC, stall breakdown (LSU back-pressure,
 load-use hazard, MulDiv stall, fetch bubbles — mutually exclusive), redirect events
-(branch mispredict, JAL BTB miss, JALR redirect) with estimated cycles-lost, and
-prediction success rates (branch %, JAL BTB hit %, JALR RAS/BTB hit %).
+(branch mispredict split into taken-miss and not-taken-miss, JAL BTB miss, JALR redirect)
+with estimated cycles-lost, and prediction success rates (branch true accuracy %,
+taken/not-taken split, JAL BTB hit %, JALR RAS/BTB hit %).
+
+---
+
+### BHT expansion + XOR-folded index ✅ DONE (2026-03-25)
+**File:** `rtl/branch_predictor.sv`
+**Actual gain: +0.1% CM/MHz** (2.873 → ~2.876; 522,034,501 → 520,947,845 ticks)
+
+Investigation triggered by apparent "50% prediction rate" — which was a counter bug
+(the metric showed correctly-predicted-taken / all-branches, not true accuracy).
+True accuracy was 90.3% (P5b) → 90.6% (after BHT improvements).
+
+Two improvements applied:
+1. **BHT entries: 64 → 256** (512 bits total, negligible area). More entries reduce capacity
+   aliasing between branches at the same PC[7:2] offset in different 256-byte pages.
+2. **XOR-folded index:** `PC[9:2] ⊕ PC[17:10]` mixes the intra-page offset with the page
+   number. Previously `PC[7:2]` aliased branches that differed only in the high page bits.
+   Not-taken-predicted events fell from ~3.5M → 3.07M.
+
+Remaining ~9.4% mispredictions are near the bimodal ceiling — data-dependent branches
+(list sort comparisons, state machine transitions) that alternate taken/not-taken each call.
+A gshare predictor (XOR PC with global history) could recover another 0.5–1%.
+
+Also fixed `BLKLOOPINIT` Verilator warning: reset of 256-entry BHT array must use blocking
+`=` (not `<=`) in for-loop; Verilator only supports non-blocking in for-loops up to ~64 entries.
 
 ---
 
