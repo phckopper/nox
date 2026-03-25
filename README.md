@@ -22,7 +22,7 @@ NoX is a 32-bit RISC-V core designed in System Verilog language aiming both `FPG
 - RV32IMAZba_Zbb_ZicondZicsr
 - 4 stages / single-issue / in-order pipeline
 - M-mode privileged spec.
-- 2.74 CoreMark/MHz (simulation, NanGate 45nm @ 300 MHz, -O2, RV32IM + Zba/Zbb/Zicond)
+- 2.87 CoreMark/MHz (simulation, NanGate 45nm @ 333 MHz, -O2, RV32IM + Zba/Zbb/Zicond)
 - Software/External/Timer interrupt
 - Support non/vectored IRQs
 - Configurable fetch FIFO size
@@ -196,7 +196,7 @@ make run_comp
 Once it is finished, you can open the report file available at **riscof_compliance/riscof_work/report.html** to check the status. The run should finished with a similar report like the one available at [docs/report_compliance.html](docs/report_compliance.html).
 
 ## <a name="coremark"></a> CoreMark
-Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **2.739 CoreMark/MHz** (simulation, NanGate 45nm @ 333 MHz, RV32IM + Zba/Zbb/Zicond, -O2), verified with "Correct operation validated."
+Inside the [sw/coremark](sw/coremark), there is a folder called **nox** which is the platform port of the [CoreMark benchmark](https://github.com/eembc/coremark) to the core. The NoX CoreMark score is **~2.873 CoreMark/MHz** (simulation, NanGate 45nm @ 333 MHz, RV32IM + Zba/Zbb/Zicond, -O2), verified with "Correct operation validated."
 
 To build and run the CoreMark benchmark using the Verilator simulator:
 ```bash
@@ -292,6 +292,11 @@ Added a speculative branch predictor to reduce branch penalty:
 - **`pc_dec` tracking fix** (`rtl/decode.sv`): a new `decode_pc_update_i` input from execute corrects `pc_dec` for instructions that follow a correctly-predicted jump or branch, ensuring that `mepc` and AUIPC/JAL link-address computations carry the right PC value.
 - **`jump_or_branch` guard relaxation** (`rtl/execute.sv`): introduced `no_jump_guard` so that a branch or jump in the cycle immediately after a correctly-predicted jump is not incorrectly suppressed.
 - **Mispredicted not-taken branch suppression** (`rtl/execute.sv`): extended the `we_rd = 0` squash logic to cover the case where a branch was predicted taken but resolved not-taken, preventing wrong-path instructions from corrupting the register file.
+
+### Fetch FIFO and simulation performance counters
+
+- **Fetch FIFO doubled** (`rtl/nox.sv`): `L0_BUFFER_SIZE` increased from 2 to 4 entries. The larger buffer absorbs post-redirect refill latency, reducing fetch bubbles from 8.2% to 4.2% of cycles. Gain: **+4.9% CoreMark/MHz** (2.739 → ~2.873), with total ticks dropping from 547,698,287 to 522,034,501.
+- **Performance counters** (`rtl/execute.sv`, `ifdef SIMULATION`): 15-counter set printed at simulation end — IPC, stall breakdown (LSU back-pressure, load-use hazard, MulDiv stall, fetch bubbles), redirect events (branch mispredict, JAL BTB miss, JALR redirect) with estimated cycles-lost, and prediction success rates for branches, JAL BTB hits, and JALR RAS/BTB hits.
 
 ### Fetch pipeline and branch predictor improvements
 

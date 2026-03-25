@@ -30,32 +30,33 @@ RV32A (atomics) has since been added; a re-synthesis run is pending.
 - **CoreMark/MHz: 2.479** (+141.9% vs P5), crcfinal=0x25b5 ✓ (1500 iter, 12.10s)
 - Cycles/iteration: 403,429
 
-### After P8+P9+P10 (2026-03-24) — Zba + Zbb-subset + Zicond ← CURRENT BEST
+### After P8+P9+P10 (2026-03-24) — Zba + Zbb-subset + Zicond
 - **CoreMark/MHz: 2.739** (+10.5% vs P7), crcfinal=0x25b5 ✓ (1500 iter, 10.95s)
 - Cycles/iteration: 365,132 | Total ticks: 547,698,287
 - Built with GCC 15.2.0 (`-march=rv32im_zba_zbb_zicond_zicsr -O2`)
 
-#### Current stall breakdown (650M cycle window, 1500-iter run):
-| Source | Count | Est. cycles lost |
-|--------|-------|-----------------|
-| Fetch bubbles (total) | 53.6M cycles | **8.2%** of all cycles |
-| — Branch mispredictions | 7.7M events × ~2 cyc | ~15.4M |
-| — JAL BTB misses | 0.84M events × ~2 cyc | ~1.7M |
-| — JALR redirects | 0.57M events × ~2 cyc | ~1.1M |
-| Load-use stalls | 31.0M cycles | **4.8%** |
+### After P5b (2026-03-25) — fetch FIFO 2→4 entries ← CURRENT BEST
+- **CoreMark/MHz: ~2.873** (+4.9% vs P8+P9+P10), crcfinal=0x25b5 ✓ (1500 iter)
+- Total ticks: 522,034,501 | Cycles/iteration: ~348,023
+
+#### Current stall breakdown (650M cycle window, 1500-iter run, perf counters):
+| Source | Cycles | % of total |
+|--------|--------|-----------|
+| Load-use hazard | 31.0M | **4.8%** |
+| Fetch bubbles (total) | 27.3M | **4.2%** |
+| — Branch mispredictions | 7.7M × ~2 cyc | ~15.4M (2.4%) |
+| — JAL BTB misses | 0.84M × ~2 cyc | ~1.7M (0.3%) |
+| — JALR redirects | 0.57M × ~2 cyc | ~1.1M (0.2%) |
+| MulDiv stall | 14.1M | **2.2%** |
+| **IPC** | | **0.867** |
+
+Prediction rates: branch **49.7%** (data-dependent, near-random) | JAL BTB **99.4%** | JALR RAS **82.3%**
 
 ---
 
 ## Pending Improvements
 
-### P1 — Add performance counters (prerequisite for further tuning)
-Before any new optimization, instrument the simulation to measure exact stall counts:
-- Load-use stall cycles (`load_use_hazard` high)
-- Branch misprediction count (`jump_i` fires on non-correct prediction)
-- Fetch-stall cycles (`fetch_valid_i=0` while pipeline is ready)
-
-Add as `$display`-based simulation counters in `execute.sv` / `fetch.sv`, printed at
-end of run alongside the coremark result.
+### P1 — Performance counters ✅ DONE (2026-03-25) — see Completed section
 
 ### P4b — Push to 400 MHz
 **File:** `synth/nox.nangate.sdc`
@@ -67,15 +68,7 @@ Expected gain: **+20% raw CoreMark score** (CM/MHz unchanged, raw score ∝ freq
 
 Also pending: re-synthesize to capture the RV32A addition (minor area increase expected).
 
-### P5b — Increase L0_BUFFER_SIZE from 2 to 4
-**File:** `rtl/fetch.sv` (parameter only — no logic changes)
-
-The fetch FIFO currently holds 2 instructions. After any redirect the FIFO is cleared
-and the pipeline stalls until 2 new instructions arrive. A 4-entry FIFO absorbs
-momentary decode backpressure and reduces bubbles from buffer underrun after short
-redirects. Area cost is minimal (~4 × 33 bits of flop).
-
-Expected gain: **+1–2% CM/MHz**.
+### P5b — Fetch FIFO 2→4 entries ✅ DONE (2026-03-25) — see Completed section
 
 ### P6 — Instruction cache (only if memory latency increases)
 **Files:** `rtl/fetch.sv`, new `rtl/icache.sv`
@@ -130,6 +123,27 @@ Expected simulation gain: **+2–4%** (BTB). Expected FPGA/silicon gain: **+8–
 ---
 
 ## Completed Improvements
+
+### P1 — Performance counters ✅ DONE (2026-03-25)
+**File:** `rtl/execute.sv` (`ifdef SIMULATION` block)
+
+15 counters printed at simulation end: IPC, stall breakdown (LSU back-pressure,
+load-use hazard, MulDiv stall, fetch bubbles — mutually exclusive), redirect events
+(branch mispredict, JAL BTB miss, JALR redirect) with estimated cycles-lost, and
+prediction success rates (branch %, JAL BTB hit %, JALR RAS/BTB hit %).
+
+---
+
+### P5b — Fetch FIFO 2→4 entries ✅ DONE (2026-03-25)
+**File:** `rtl/nox.sv` (`L0_BUFFER_SIZE` default 2→4)
+**Actual gain: +4.9% CM/MHz** (2.739 → ~2.873; 547,698,287 → 522,034,501 ticks)
+
+A larger fetch FIFO absorbs post-redirect refill latency — the pipeline can drain
+more instructions from the buffer before stalling. Fetch bubbles fell from 8.2% to
+4.2% of cycles. Also fixed a `WIDTHEXPAND` lint warning in `fetch.sv` (explicit
+`buffer_t'()` casts on line 107, exposed because `$clog2(4)=2` gives a 3-bit type).
+
+---
 
 ### P2 — Add Return Address Stack (RAS) ✅ DONE (2026-03-24)
 **File:** `rtl/branch_predictor.sv` (+ `rtl/fetch.sv`, `rtl/execute.sv`)
