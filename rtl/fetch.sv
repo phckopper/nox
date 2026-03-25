@@ -104,7 +104,7 @@ module fetch
     jump         = fetch_req_i;
     valid_txn_i  = 1'b0;
 
-    next_ot = ot_cnt_ff + (req_ff && addr_ready) - (data_valid && data_ready);
+    next_ot = ot_cnt_ff + buffer_t'(req_ff && addr_ready) - buffer_t'(data_valid && data_ready);
 
     case (st_ff)
       F_STP: begin
