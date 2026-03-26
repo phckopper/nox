@@ -237,6 +237,8 @@ Correct operation validated. See README.md for run and reporting rules.
 
 CoreMark/MHz = 1,500 × 50,000,000 / 518,472,885 = **2.893 CM/MHz** at 50 MHz (+16.7% vs RV32IM baseline of 2.479).
 
+> **Tag:** [`nox-turbo`](../../releases/tag/nox-turbo) — snapshot of this result (128-entry BTB + full Zbb, 2026-03-26).
+
 ## <a name="synth"></a> Synthesis
 
 Adapting the setup to [Ibex Core - low risc](https://github.com/lowRISC/ibex/tree/master/syn), attached is the command to perform synthesis on the 45nm nangate PDK.
