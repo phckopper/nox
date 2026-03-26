@@ -123,7 +123,7 @@ module csr
 
     case(csr_i.addr)
       RV_CSR_MSTATUS: begin
-        csr_wr_args.mask   = 'h807FF9BB;
+        csr_wr_args.mask   = 64'h0000_0000_807F_F9BB;
         csr_rd_o           = csr_mstatus_ff;
         csr_wr_args.csr_rd = csr_rd_o;
         next_mstatus       = wr_csr_val(csr_wr_args);
@@ -135,7 +135,7 @@ module csr
         next_mie           = wr_csr_val(csr_wr_args);
       end
       RV_CSR_MTVEC: begin
-        csr_wr_args.mask   = 'hFFFF_FFFD;
+        csr_wr_args.mask   = 64'hFFFF_FFFF_FFFF_FFFD;
         csr_rd_o           = csr_mtvec_ff;
         csr_wr_args.csr_rd = csr_rd_o;
         next_mtvec         = wr_csr_val(csr_wr_args);
@@ -146,7 +146,7 @@ module csr
         next_mscratch      = wr_csr_val(csr_wr_args);
       end
       RV_CSR_MEPC: begin
-        csr_wr_args.mask   = 'hFFFF_FFFC;
+        csr_wr_args.mask   = 64'hFFFF_FFFF_FFFF_FFFC;
         csr_rd_o           = csr_mepc_ff;
         csr_wr_args.csr_rd = csr_rd_o;
         next_mepc          = wr_csr_val(csr_wr_args);
@@ -169,8 +169,8 @@ module csr
       //RV_CSR_MCYCLEH:   csr_rd_o = csr_cycle_ff[63:32];
       //RV_CSR_MINSTRET:  csr_rd_o = csr_minstret_ff[31:0];
       //RV_CSR_MINSTRETH: csr_rd_o = csr_minstret_ff[63:32];
-      RV_CSR_CYCLE:     csr_rd_o = csr_cycle_ff[31:0];
-      RV_CSR_CYCLEH:    csr_rd_o = csr_cycle_ff[63:32];
+      RV_CSR_CYCLE:     csr_rd_o = csr_cycle_ff[63:0];
+      RV_CSR_CYCLEH:    csr_rd_o = csr_cycle_ff[127:64];
       //RV_CSR_INSTRET:   csr_rd_o = csr_minstret_ff[31:0];
       //RV_CSR_INSTRETH:  csr_rd_o = csr_minstret_ff[63:32];
       //RV_CSR_TIME:      csr_rd_o = csr_time_ff[31:0];
@@ -179,7 +179,7 @@ module csr
       //RV_CSR_MVENDORID: csr_rd_o = `M_VENDOR_ID;
       //RV_CSR_MARCHID:   csr_rd_o = `M_ARCH_ID;
       //RV_CSR_MIMPLID:   csr_rd_o = `M_IMPL_ID;
-      RV_CSR_MHARTID:   csr_rd_o = M_HART_ID;
+      RV_CSR_MHARTID:   csr_rd_o = rdata_t'(M_HART_ID);
       default:          csr_rd_o = rdata_t'('0);
     endcase
 
@@ -206,7 +206,7 @@ module csr
        csr_mie_ff[`RV_MIE_MEIP]): begin
         //next_mip[`RV_MIE_MEIP] = 'b1;
         next_mepc              = pc_addr_i;
-        next_mcause            = 'h8000_000B;
+        next_mcause            = 64'h8000_0000_0000_000B;
         next_mtval             = rdata_t'('h0);
         next_trap.active       = 'b1;
         dbg_irq_mext           = 'b1;
@@ -216,7 +216,7 @@ module csr
        csr_mie_ff[`RV_MIE_MSIP]): begin
         next_mip[`RV_MIE_MSIP] = 'b1;
         next_mepc              = pc_addr_i;
-        next_mcause            = 'h8000_0003;
+        next_mcause            = 64'h8000_0000_0000_0003;
         next_mtval             = rdata_t'('h0);
         next_trap.active       = 'b1;
         dbg_irq_msoft          = 'b1;
@@ -226,7 +226,7 @@ module csr
        csr_mie_ff[`RV_MIE_MTIP]): begin
         //next_mip[`RV_MIE_MTIP] = 'b1;
         next_mepc              = pc_addr_i;
-        next_mcause            = 'h8000_0007;
+        next_mcause            = 64'h8000_0000_0000_0007;
         next_mtval             = rdata_t'('h0);
         next_trap.active       = 'b1;
         dbg_irq_mtime          = 'b1;
@@ -234,19 +234,19 @@ module csr
       fetch_trap_i.active: begin  // TODO: test this feature
         next_mepc        = pc_addr_i;
         next_mcause      = 'd1;
-        next_mtval       = fetch_trap_i.mtval;
+        next_mtval       = rdata_t'(fetch_trap_i.mtval);
         next_trap.active = 'b1;
       end
       (dec_trap_i.active && ~will_jump_i): begin
         next_mepc        = dec_trap_i.pc_addr;
         next_mcause      = 'd2;
-        next_mtval       = dec_trap_i.mtval;
+        next_mtval       = rdata_t'(dec_trap_i.mtval);
         next_trap.active = 'b1;
       end
       instr_addr_mis_i.active: begin
         next_mepc        = pc_addr_i;
         next_mcause      = 'd0;
-        next_mtval       = instr_addr_mis_i.mtval;
+        next_mtval       = rdata_t'(instr_addr_mis_i.mtval);
         next_trap.active = 'b1;
       end
       ecall_i: begin
@@ -311,9 +311,9 @@ module csr
     end
 
     // Define trap address
-    mtvec_base_addr   = {csr_mtvec_ff[31:2],2'h0};
+    mtvec_base_addr   = {csr_mtvec_ff[63:2],2'h0};
     mtvec_vectored    = csr_mtvec_ff[0];
-    mcause_interrupt  = next_mcause[31];
+    mcause_interrupt  = next_mcause[63];
     async_int         = mcause_int_t'(next_mcause[3:0]);
     trap_offset       = 'h0;
     next_trap.pc_addr = mtvec_base_addr;
@@ -364,7 +364,7 @@ module csr
     `RST_TYPE(rst) begin
       csr_mstatus_ff  <=  'h1880;
       csr_mie_ff      <=  `OP_RST_L;
-      csr_mtvec_ff    <=  MTVEC_DEFAULT_VAL;
+      csr_mtvec_ff    <=  rdata_t'(MTVEC_DEFAULT_VAL);
       csr_mscratch_ff <=  `OP_RST_L;
       csr_mepc_ff     <=  `OP_RST_L;
       csr_mcause_ff   <=  `OP_RST_L;

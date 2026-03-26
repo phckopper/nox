@@ -68,13 +68,14 @@ module fetch
   logic         predict_taken;
   pc_t          predict_target;
 
-  // OT FIFO: [33:2]=predict_target, [1]=bp_taken, [0]=valid_txn  (34 bits)
-  logic [33:0]  ot_data_out;
+  // OT FIFO: [66:3]=predict_target, [2]=pc_bit2, [1]=bp_taken, [0]=valid_txn  (67 bits)
+  logic [66:0]  ot_data_out;
   logic         bp_taken_txn;   // bp_taken  propagated from OT FIFO to L0 FIFO
   pc_t          bp_target_txn;  // predict_target propagated from OT FIFO to L0 FIFO
+  logic         pc_bit2_txn;    // PC[2] for 32-bit lane selection from 64-bit bus
 
-  // L0 FIFO: [64:33]=predict_target, [32]=bp_taken, [31:0]=instruction  (65 bits)
-  logic [64:0]  l0_data_out;
+  // L0 FIFO: [96:33]=predict_target, [32]=bp_taken, [31:0]=instruction  (97 bits)
+  logic [96:0]  l0_data_out;
 
   typedef enum logic [1:0] {
     F_STP,
@@ -185,17 +186,18 @@ module fetch
     next_req = valid_addr;
     instr_cb_mosi_o.rd_addr_valid = req_ff;
     instr_cb_mosi_o.rd_addr       = req_ff ? ((st_ff == F_CLR) ? pc_buff_ff : pc_addr_ff) : '0;
-    instr_cb_mosi_o.rd_size       = req_ff ? cb_size_t'(CB_WORD) : cb_size_t'('0);
+    instr_cb_mosi_o.rd_size       = req_ff ? cb_size_t'(CB_DWORD) : cb_size_t'('0);
   end : addr_chn_req
 
-  // Decode OT FIFO output: bit[0]=valid_txn, bit[1]=bp_taken, [33:2]=predict_target
-  assign valid_txn_o  = ot_data_out[0];
-  assign bp_taken_txn = ot_data_out[1];
-  assign bp_target_txn = ot_data_out[33:2];
-  // Decode L0 FIFO output: bits[31:0]=instruction, bit[32]=bp_taken, [64:33]=predict_target
+  // Decode OT FIFO output: bit[0]=valid_txn, bit[1]=bp_taken, bit[2]=pc_bit2, [66:3]=predict_target
+  assign valid_txn_o   = ot_data_out[0];
+  assign bp_taken_txn  = ot_data_out[1];
+  assign pc_bit2_txn   = ot_data_out[2];
+  assign bp_target_txn = ot_data_out[66:3];
+  // Decode L0 FIFO output: bits[31:0]=instruction, bit[32]=bp_taken, [96:33]=predict_target
   assign instr_buffer              = instr_raw_t'(l0_data_out[31:0]);
   assign fetch_bp_taken_o          = l0_data_out[32];
-  assign fetch_bp_predict_target_o = l0_data_out[64:33];
+  assign fetch_bp_predict_target_o = l0_data_out[96:33];
 
   always_comb begin : rd_chn
     write_instr = 'b0;
@@ -258,19 +260,19 @@ module fetch
     end
   end : fetch_proc_if
 
-  // OT tracking FIFO: WIDTH=34, [33:2]=predict_target, [1]=bp_taken, [0]=valid_txn.
+  // OT tracking FIFO: WIDTH=67, [66:3]=predict_target, [2]=pc_bit2, [1]=bp_taken, [0]=valid_txn.
   // predict_taken and predict_target are captured at address-phase so they travel
   // with the transaction and are forwarded into the L0 FIFO on the data phase.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (34)
+    .WIDTH    (67)
   ) u_fifo_ot_rd (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  ((req_ff && addr_ready)),
     .read_i   (read_ot_fifo),
-    .data_i   ({predict_target, predict_taken && ~jump, valid_txn_i}),
+    .data_i   ({predict_target, pc_addr_ff[2], predict_taken && ~jump, valid_txn_i}),
     .data_o   (ot_data_out),
     .error_o  (),
     .full_o   (),
@@ -278,17 +280,24 @@ module fetch
     .ocup_o   ()
   );
 
-  // Instruction FIFO: WIDTH=65, [64:33]=predict_target, [32]=bp_taken, [31:0]=instruction.
+  // Select correct 32-bit instruction lane from 64-bit read data based on PC[2]
+  // pc_bit2_txn is captured at address-phase and travels through the OT FIFO
+  // so it matches the returning data beat, not the current fetch address.
+  logic [31:0] instr_from_bus;
+  assign instr_from_bus = pc_bit2_txn ? instr_cb_miso_i.rd_data[63:32]
+                                      : instr_cb_miso_i.rd_data[31:0];
+
+  // Instruction FIFO: WIDTH=97, [96:33]=predict_target, [32]=bp_taken, [31:0]=instruction.
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (65)
+    .WIDTH    (97)
   ) u_fifo_l0 (
     .clk      (clk),
     .rst      (rst),
     .clear_i  (clear_fifo),
     .write_i  (write_instr),
     .read_i   (get_next_instr),
-    .data_i   ({bp_target_txn, bp_taken_txn, instr_cb_miso_i.rd_data}),
+    .data_i   ({bp_target_txn, bp_taken_txn, instr_from_bus}),
     .data_o   (l0_data_out),
     .error_o  (),
     .full_o   (full_fifo),

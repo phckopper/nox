@@ -29,24 +29,26 @@ module wb
 
   function automatic rdata_t fmt_load(s_lsu_op_t load, rdata_t rdata);
     rdata_t data;
-    // Word loads require word-aligned access (addr[1:0]==0), so no barrel
+    // Doubleword loads require doubleword-aligned access, so no barrel
     // shift is ever needed. Returning rdata directly breaks the combinational
     // path from AXI rdata through the shift-mux tree to the forwarding bus,
     // which is the timing-critical load-use forwarding path.
-    if (load.width == RV_LSU_W) begin
+    if (load.width == RV_LSU_D) begin
       return rdata;
     end
     for (int i=0;i<`XLEN/8;i++) begin
-      if (load.addr[1:0]==i[1:0]) begin
+      if (load.addr[2:0]==i[2:0]) begin
         data = rdata >> (8*i);
       end
     end
 
     case (load.width)
-      RV_LSU_B:   return {{24{data[7]}},data[7:0]};
-      RV_LSU_H:   return {{16{data[15]}},data[15:0]};
-      RV_LSU_BU:  return {24'h0,data[7:0]};
-      RV_LSU_HU:  return {16'h0,data[15:0]};
+      RV_LSU_B:   return {{56{data[7]}},data[7:0]};
+      RV_LSU_H:   return {{48{data[15]}},data[15:0]};
+      RV_LSU_W:   return {{32{data[31]}},data[31:0]};
+      RV_LSU_BU:  return {56'h0,data[7:0]};
+      RV_LSU_HU:  return {48'h0,data[15:0]};
+      RV_LSU_WU:  return {32'h0,data[31:0]};
       default:    return data;
     endcase
   endfunction

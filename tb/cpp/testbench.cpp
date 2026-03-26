@@ -95,9 +95,9 @@ bool loadELF(testbench<Vnox_sim> *sim, string program_path, const bool en_print)
 
   program.load(program_path);
 
-  if (program.get_class() != ELFCLASS32 ||
+  if ((program.get_class() != ELFCLASS32 && program.get_class() != ELFCLASS64) ||
     program.get_machine() != 0xf3){
-    cout << "\n[ERROR] Error loading ELF file, headers does not match with ELFCLASS32/RISC-V!" << std::endl;
+    cout << "\n[ERROR] Error loading ELF file, headers does not match with RISC-V!" << std::endl;
     return 1;
   }
 

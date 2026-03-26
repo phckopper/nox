@@ -599,3 +599,53 @@ validates the privilege/MMU implementation before investing in performance featu
 The gate count increase is driven primarily by caches (~500 KGE for both L1+L2), the
 physical register files (~60 KGE), ROB + issue queues (~40 KGE), and the FPU (~40 KGE).
 Without caches, the core logic alone would be ~200–300 KGE — comparable to the ARM Cortex-A5.
+
+---
+
+## Progress Log
+
+### Phase 1: RV64 In-Order Core
+
+**2026-03-26 — Step 1: Widen core parameters to 64-bit** ✅
+- `riscv_pkg.svh`: `PC_WIDTH` 32→64, `XLEN` 32→64, `shamt_t` 5→6 bits
+  - Fixed `instr_raw_t` hardcoded to 32-bit (was XLEN-dependent)
+  - Fixed `raddr_t` hardcoded to 5-bit (was `$clog2(XLEN)-1:0`)
+  - Added `RV_LSU_D` (doubleword) and `RV_LSU_WU` (unsigned word) to `lsu_w_t`
+  - Added `is_word_op` flag to `s_id_ex_t` for *W instruction support
+  - Widened `gen_imm` sign-extension for all immediate types
+  - Widened `s_trap_info_t.mtval` to XLEN (was `instr_raw_t`)
+- `core_bus_pkg.svh`: `CB_ADDR_WIDTH` 32→64, `CB_DATA_WIDTH` 32→64, added `CB_DWORD`
+- `nox_pkg.svh`: `M_ISA_ID` → RV64 MXL=2 encoding
+- `amba_axi_pkg.sv`: `AXI_ADDR_WIDTH` 32→64, `AXI_DATA_WIDTH` 32→64
+
+**2026-03-26 — Step 2: Fix width mismatches across all RTL** ✅
+- `csr.sv`: 64-bit constants, mcause bit 63, MTVEC widening, interrupt cause widths
+- `lsu.sv`: 64-bit bus, LD/SD/LWU support, mask_strobe, AMO widening
+- `execute.sv`: 64-bit ALU, Zbb widening (clz/ctz/cpop/rol/ror/orc.b/rev8 for 64-bit)
+- `wb.sv`: 64-bit `fmt_load` sign/zero extension (LB/LH/LW/LD/LBU/LHU/LWU)
+- `fetch.sv`: 64-bit PC, instruction lane selection from 64-bit bus word
+
+**2026-03-26 — Step 3: Widen muldiv_unit to 64-bit** ✅
+- 65×65 signed multiplier (was 33×33), 130-bit product
+- 64-cycle restoring divider (was 32-cycle), 64-bit remainder/quotient
+- Added `word_op_i` port for *W instructions (MULW/DIVW/REMW)
+- Word ops: sign-extend inputs, use 32-cycle div, sign-extend 32-bit result
+
+**2026-03-26 — Step 4: Add *W instruction decode** ✅
+- `decode.sv`: Added `RV_OP_IMM_32` case (ADDIW, SLLIW, SRLIW, SRAIW)
+- `decode.sv`: Added `RV_OP_32` case (ADDW, SUBW, SLLW, SRLW, SRAW, MULW, DIVW, REMW)
+- Both cases set `is_word_op = 1` and dispatch through existing ALU/muldiv paths
+- `execute.sv`: Added word-op operand narrowing before ALU (zero-extend for SRLW, sign-extend for SRAW)
+- `execute.sv`: Added 32→64 sign-extension of ALU result for word ops
+
+**2026-03-26 — Step 5: Widen testbench** ✅
+- `tb/axi_mem.sv`: 64-bit memory words, 64-bit address constants, widened functions
+- `tb/nox_sim.sv`: writeWordIRAM/DRAM pack 32-bit words into 64-bit memory entries
+- `tb/cpp/testbench.cpp`: Accept both ELFCLASS32 and ELFCLASS64
+
+**Build status:** Clean compilation, zero Verilator warnings. Simulator binary: `output_verilator_rv64/nox_sim`
+
+### Next steps
+- [ ] Build RV64 test program and verify basic operation (hello_world or simple test)
+- [ ] Add C extension expander (pre-decode stage)
+- [ ] Run RV64 CoreMark

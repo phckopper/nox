@@ -182,7 +182,21 @@ module execute
       endcase
     end
 
-    // ALU compute — base RV32IM + Zba / Zbb-subset / Zicond extensions
+    // RV64: *W instructions operate on lower 32 bits of operands.
+    // - SRLW needs zero-extended op1[31:0] so upper bits don't shift in
+    // - SRAW needs sign-extended op1[31] so arithmetic shift uses bit 31
+    // - SLLW/ADDW/SUBW: zero-extend is safe (lower 32 bits unaffected)
+    // Also mask shift amount to 5 bits for *W.
+    if (id_ex_i.is_word_op) begin
+      if (id_ex_i.f3 == RV_F3_SRL_SRA && id_ex_i.rshift == RV_SRA)
+        op1 = {{32{op1[31]}}, op1[31:0]};  // sign-extend for SRAW
+      else
+        op1 = {32'b0, op1[31:0]};          // zero-extend for SRLW/SLLW/others
+      op2 = (id_ex_i.f3 == RV_F3_SLL || id_ex_i.f3 == RV_F3_SRL_SRA) ?
+            {59'b0, op2[4:0]} : op2;
+    end
+
+    // ALU compute — base RV64IM + Zba / Zbb-subset / Zicond extensions
     case (id_ex_i.f3)
       // funct3=000: ADD, SUB — no extension uses this funct3
       RV_F3_ADD_SUB:  res = (id_ex_i.f7 == RV_F7_1) ? op1 - op2 : op1 + op2;
@@ -195,45 +209,45 @@ module execute
       //                         rol (funct7=0110000) OP binary          [Zbb]
       RV_F3_SLL: begin
         if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0100) begin
-          res = {{24{op1[7]}},  op1[7:0]};       // sext.b
+          res = {{56{op1[7]}},  op1[7:0]};       // sext.b
         end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0101) begin
-          res = {{16{op1[15]}}, op1[15:0]};      // sext.h
+          res = {{48{op1[15]}}, op1[15:0]};      // sext.h
         end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0000) begin
           // clz: count leading zeros
           begin
-            logic [5:0] clz_n;
-            clz_n = 6'd32;
-            for (int ci = 31; ci >= 0; ci--) begin
-              if (op1[ci] && (clz_n == 6'd32)) clz_n = 6'(31 - ci);
+            logic [6:0] clz_n;
+            clz_n = 7'd64;
+            for (int ci = 63; ci >= 0; ci--) begin
+              if (op1[ci] && (clz_n == 7'd64)) clz_n = 7'(63 - ci);
             end
             res = alu_t'(clz_n);
           end
         end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0001) begin
           // ctz: count trailing zeros
           begin
-            logic [5:0] ctz_n;
-            ctz_n = 6'd32;
-            for (int ci = 0; ci <= 31; ci++) begin
-              if (op1[ci] && (ctz_n == 6'd32)) ctz_n = 6'(ci);
+            logic [6:0] ctz_n;
+            ctz_n = 7'd64;
+            for (int ci = 0; ci <= 63; ci++) begin
+              if (op1[ci] && (ctz_n == 7'd64)) ctz_n = 7'(ci);
             end
             res = alu_t'(ctz_n);
           end
         end else if (id_ex_i.funct7_raw == 7'b011_0000 && id_ex_i.imm[4:0] == 5'b0_0010) begin
           // cpop: population count
           begin
-            logic [5:0] pop_n;
-            pop_n = 6'd0;
-            for (int ci = 0; ci <= 31; ci++) begin
-              if (op1[ci]) pop_n = pop_n + 6'd1;
+            logic [6:0] pop_n;
+            pop_n = 7'd0;
+            for (int ci = 0; ci <= 63; ci++) begin
+              if (op1[ci]) pop_n = pop_n + 7'd1;
             end
             res = alu_t'(pop_n);
           end
         end else if (id_ex_i.funct7_raw == 7'b011_0000) begin
           // rol: rotate left (OP binary, op2 is rs2)
-          res = (op2[4:0] == 5'b0) ? op1 :
-                ((op1 << op2[4:0]) | (op1 >> (6'd32 - {1'b0, op2[4:0]})));
+          res = (op2[5:0] == 6'b0) ? op1 :
+                ((op1 << op2[5:0]) | (op1 >> (7'd64 - {1'b0, op2[5:0]})));
         end else begin
-          res = op1 << op2[4:0];                 // SLL / SLLI
+          res = op1 << op2[5:0];                 // SLL / SLLI
         end
       end
 
@@ -255,7 +269,7 @@ module execute
           7'b001_0000: res = (op1 << 2) + op2;              // sh2add  [Zba]
           7'b000_0101: res = ($signed(op1) < $signed(op2)) ? op1 : op2; // min [Zbb]
           7'b010_0000: res = ~(op1 ^ op2);                  // xnor   [Zbb]
-          7'b000_0100: res = {16'b0, op1[15:0]};            // zext.h [Zbb]
+          7'b000_0100: res = {48'b0, op1[15:0]};            // zext.h [Zbb]
           default:     res = op1 ^ op2;                     // XOR
         endcase
       end
@@ -269,23 +283,26 @@ module execute
           7'b000_0101: res = (op1 < op2) ? op1 : op2;       // minu   [Zbb]
           7'b000_0111: res = (op2 == '0) ? '0 : op1;        // czero.eqz [Zicond]
           7'b011_0000: begin
-            // ror / rori: rotate right; op2[4:0] is the shift amount
-            res = (op2[4:0] == 5'b0) ? op1 :
-                  ((op1 >> op2[4:0]) | (op1 << (6'd32 - {1'b0, op2[4:0]})));
+            // ror / rori: rotate right; op2[5:0] is the shift amount
+            res = (op2[5:0] == 6'b0) ? op1 :
+                  ((op1 >> op2[5:0]) | (op1 << (7'd64 - {1'b0, op2[5:0]})));
           end
           7'b010_1000: begin
             // orc.b (funct7=0x28, shamt=0x07): OR-combine bytes
             // Each byte becomes 0xFF if any bit set, else 0x00
-            res = { {8{|op1[31:24]}}, {8{|op1[23:16]}},
+            res = { {8{|op1[63:56]}}, {8{|op1[55:48]}},
+                    {8{|op1[47:40]}}, {8{|op1[39:32]}},
+                    {8{|op1[31:24]}}, {8{|op1[23:16]}},
                     {8{|op1[15:8]}},  {8{|op1[7:0]}}  };
           end
           7'b011_0101: begin
             // rev8 (funct7=0x35, shamt=0x18): byte-reverse (endian swap)
-            res = {op1[7:0], op1[15:8], op1[23:16], op1[31:24]};
+            res = {op1[7:0], op1[15:8], op1[23:16], op1[31:24],
+                   op1[39:32], op1[47:40], op1[55:48], op1[63:56]};
           end
           default:     res = (id_ex_i.rshift == RV_SRA) ?
-                             signed'((signed'(op1) >>> op2[4:0])) :
-                             (op1 >> op2[4:0]);              // SRL/SRA
+                             signed'((signed'(op1) >>> op2[5:0])) :
+                             (op1 >> op2[5:0]);              // SRL/SRA
         endcase
       end
 
@@ -312,7 +329,11 @@ module execute
       default: res = 'd0;
     endcase
 
-    next_ex_mem_wb.result  = (id_ex_i.jump) ? alu_t'(id_ex_i.pc_dec+'d4) : res;
+    // RV64: *W instructions sign-extend 32-bit ALU result to 64
+    if (id_ex_i.is_word_op && ~id_ex_i.jump && ~id_ex_i.is_muldiv)
+      next_ex_mem_wb.result = {{32{res[31]}}, res[31:0]};
+    else
+      next_ex_mem_wb.result = (id_ex_i.jump) ? alu_t'(id_ex_i.pc_dec+'d4) : res;
     next_ex_mem_wb.rd_addr = id_ex_i.rd_addr;
     next_ex_mem_wb.we_rd   = id_ex_i.we_rd;
     next_ex_mem_wb.lsu     = id_ex_i.lsu;
@@ -411,7 +432,7 @@ module execute
 
     next_jump.j_act  = no_jump_guard && id_ex_i.jump && ~lsu_bp_i &&
                        ~load_use_hazard && ~wrong_path;
-    next_jump.j_addr = {res[31:1], 1'b0};
+    next_jump.j_addr = {res[`XLEN-1:1], 1'b0};
 
     // Track the instruction PC so the predictor update carries the right address.
     next_branch_pc = next_branch.b_act ? id_ex_i.pc_dec : branch_pc_ff;
@@ -734,7 +755,7 @@ module execute
   end
 `endif
 
-  // P7: MulDiv unit
+  // P7: MulDiv unit (RV64M — 65×65 multiplier, 64-cycle divider)
   // freeze_i = lsu_bp_i pauses the divider counter while AXI is stalled.
   muldiv_unit u_muldiv (
     .clk            (clk),
@@ -744,6 +765,7 @@ module execute
     .op_i           (id_ex_i.f3),
     .a_i            (op1),
     .b_i            (op2),
+    .word_op_i      (id_ex_i.is_word_op),
     .stall_o        (muldiv_stall),
     .result_valid_o (muldiv_result_valid),
     .result_o       (muldiv_result)

@@ -83,27 +83,40 @@ module lsu
   logic       bp_amo;
 
   // ── Byte-strobe helper ────────────────────────────────────────────────────
-  function automatic logic [3:0] mask_strobe(lsu_w_t size, logic [1:0] shift_left);
+  function automatic cb_strb_t mask_strobe(lsu_w_t size, logic [2:0] shift_left);
     cb_strb_t mask;
     case (size)
-      RV_LSU_B:  mask = cb_strb_t'('b0001);
-      RV_LSU_H:  mask = cb_strb_t'('b0011);
-      RV_LSU_BU: mask = cb_strb_t'('b0001);
-      RV_LSU_HU: mask = cb_strb_t'('b0011);
-      RV_LSU_W:  mask = cb_strb_t'('b1111);
-      default:   mask = cb_strb_t'('b1111);
+      RV_LSU_B:  mask = cb_strb_t'(8'b0000_0001);
+      RV_LSU_H:  mask = cb_strb_t'(8'b0000_0011);
+      RV_LSU_BU: mask = cb_strb_t'(8'b0000_0001);
+      RV_LSU_HU: mask = cb_strb_t'(8'b0000_0011);
+      RV_LSU_W:  mask = cb_strb_t'(8'b0000_1111);
+      RV_LSU_WU: mask = cb_strb_t'(8'b0000_1111);
+      RV_LSU_D:  mask = cb_strb_t'(8'b1111_1111);
+      default:   mask = cb_strb_t'(8'b1111_1111);
     endcase
 
     for (int i=0;i<`XLEN/8;i++) begin
-      if (i[1:0] == shift_left) begin
+      if (i[2:0] == shift_left) begin
         return mask;
       end
       else begin
-        mask = {mask[2:0],1'b0};
+        mask = {mask[6:0],1'b0};
       end
     end
 
     return mask;
+  endfunction
+
+  // ── AXI transfer size helper ──────────────────────────────────────────────
+  function automatic cb_size_t lsu_cb_size(lsu_w_t w);
+    case (w)
+      RV_LSU_B,  RV_LSU_BU: return CB_BYTE;
+      RV_LSU_H,  RV_LSU_HU: return CB_HALF_WORD;
+      RV_LSU_W,  RV_LSU_WU: return CB_WORD;
+      RV_LSU_D:              return CB_DWORD;
+      default:               return CB_DWORD;
+    endcase
   endfunction
 
   // ── P11: AMO ALU — compute store-back value ───────────────────────────────
@@ -150,9 +163,9 @@ module lsu
       if (~dp_done_ff)
         bp_data = dp_rd_txn ? ~data_cb_miso_i.rd_valid : ~data_cb_miso_i.wr_data_ready;
       if (dp_wr_txn) begin
-        data_cb_mosi_o.wr_strobe = mask_strobe(lsu_ff.width, lsu_ff.addr[1:0]);
+        data_cb_mosi_o.wr_strobe = mask_strobe(lsu_ff.width, lsu_ff.addr[2:0]);
         for (int i=0;i<`XLEN/8;i++) begin
-          if (lsu_ff.addr[1:0]==i[1:0]) begin
+          if (lsu_ff.addr[2:0]==i[2:0]) begin
             data_cb_mosi_o.wr_data = lsu_ff.wdata << (8*i);
           end
           data_cb_mosi_o.wr_data[(i*8)+:8] = data_cb_mosi_o.wr_strobe[i] ?
@@ -175,13 +188,13 @@ module lsu
     if (ap_txn) begin
         bp_addr = ap_rd_txn ? ~data_cb_miso_i.rd_addr_ready : ~data_cb_miso_i.wr_addr_ready;
       if (ap_wr_txn) begin
-        data_cb_mosi_o.wr_addr       = {lsu_req_addr[31:2],2'b0};
-        data_cb_mosi_o.wr_size       = CB_WORD;
+        data_cb_mosi_o.wr_addr       = {lsu_req_addr[63:3],3'b0};
+        data_cb_mosi_o.wr_size       = lsu_cb_size(lsu_i.width);
         data_cb_mosi_o.wr_addr_valid = ~bp_data;
       end
       else begin
-        data_cb_mosi_o.rd_addr       = {lsu_req_addr[31:2],2'b0};
-        data_cb_mosi_o.rd_size       = CB_WORD;
+        data_cb_mosi_o.rd_addr       = {lsu_req_addr[63:3],3'b0};
+        data_cb_mosi_o.rd_size       = lsu_cb_size(lsu_i.width);
         data_cb_mosi_o.rd_addr_valid = ~bp_data;
       end
     end
@@ -215,17 +228,17 @@ module lsu
       AMO_IDLE: begin
         if (lsu_i.op_typ == LSU_AMO) begin
           // Capture operands for the state machine
-          next_amo_addr  = {lsu_i.addr[31:2], 2'b0};  // word-align
+          next_amo_addr  = {lsu_i.addr[63:3], 3'b0};  // dword-align
           next_amo_wdata = lsu_i.wdata;
           next_amo_op    = lsu_i.amo_op;
 
           if (lsu_i.amo_op == AMO_SC) begin
-            // Invalidate reservation unconditionally on any SC.W attempt
+            // Invalidate reservation unconditionally on any SC attempt
             next_lr_reserved = 1'b0;
-            if (lr_reserved_ff && (lr_addr_ff == {lsu_i.addr[31:2], 2'b0})) begin
+            if (lr_reserved_ff && (lr_addr_ff == {lsu_i.addr[63:3], 3'b0})) begin
               // SC success: skip the load phase, go straight to write
               next_sc_success  = 1'b1;
-              next_amo_loaded  = 32'h0;   // SC success result = 0
+              next_amo_loaded  = rdata_t'(0);   // SC success result = 0
               next_amo_result  = lsu_i.wdata;  // store rs2 to memory
               next_amo_state   = AMO_WR;
               next_amo_wr_addr_sent = 1'b0;
@@ -247,7 +260,7 @@ module lsu
         bp_amo = 1'b1;
         // Drive read address (keep valid until accepted)
         data_cb_mosi_o.rd_addr       = amo_addr_ff;
-        data_cb_mosi_o.rd_size       = CB_WORD;
+        data_cb_mosi_o.rd_size       = lsu_cb_size(lsu_ff.width);
         data_cb_mosi_o.rd_addr_valid = ~amo_rd_sent_ff;
 
         if (~amo_rd_sent_ff && data_cb_miso_i.rd_addr_ready)
@@ -271,10 +284,10 @@ module lsu
         next_sc_success = sc_success_ff;
         // Drive write address and data (keep valid until each is accepted)
         data_cb_mosi_o.wr_addr       = amo_addr_ff;
-        data_cb_mosi_o.wr_size       = CB_WORD;
+        data_cb_mosi_o.wr_size       = lsu_cb_size(lsu_ff.width);
         data_cb_mosi_o.wr_addr_valid = ~amo_wr_addr_sent_ff;
         data_cb_mosi_o.wr_data       = amo_result_ff;
-        data_cb_mosi_o.wr_strobe     = 4'b1111;
+        data_cb_mosi_o.wr_strobe     = mask_strobe(lsu_ff.width, 3'b0);
         data_cb_mosi_o.wr_data_valid = ~amo_wr_data_sent_ff;
 
         if (~amo_wr_addr_sent_ff && data_cb_miso_i.wr_addr_ready)
@@ -301,12 +314,12 @@ module lsu
     if (dp_txn && dp_rd_txn && ~dp_done_ff &&
         data_cb_miso_i.rd_valid && lsu_ff.amo_op == AMO_LR) begin
       next_lr_reserved = 1'b1;
-      next_lr_addr     = {lsu_ff.addr[31:2], 2'b0};
+      next_lr_addr     = {lsu_ff.addr[63:3], 3'b0};
     end
 
     // Invalidate reservation on any regular STORE to the reserved address
     if (lsu_ff.op_typ == LSU_STORE &&
-        ({lsu_ff.addr[31:2], 2'b0} == lr_addr_ff)) begin
+        ({lsu_ff.addr[63:3], 3'b0} == lr_addr_ff)) begin
       next_lr_reserved = 1'b0;
     end
 
@@ -334,7 +347,7 @@ module lsu
     lsu_data_o = data_cb_miso_i.rd_data;
     if (lsu_ff.op_typ == LSU_AMO) begin
       if (lsu_ff.amo_op == AMO_SC) begin
-        lsu_data_o = sc_success_ff ? 32'h0 : 32'h1;
+        lsu_data_o = sc_success_ff ? rdata_t'(0) : rdata_t'(1);
       end else begin
         lsu_data_o = amo_loaded_ff;
       end
@@ -348,10 +361,12 @@ module lsu
 
     case (lsu_i.width)
       RV_LSU_B:  unaligned_lsu = 'b0;
-      RV_LSU_H:  unaligned_lsu = (lsu_req_addr[1:0] == 'd3);
+      RV_LSU_H:  unaligned_lsu = (lsu_req_addr[0]   != 1'b0);
       RV_LSU_BU: unaligned_lsu = 'b0;
-      RV_LSU_HU: unaligned_lsu = (lsu_req_addr[1:0] == 'd3);
-      RV_LSU_W:  unaligned_lsu = (lsu_req_addr[1:0] != 'd0);
+      RV_LSU_HU: unaligned_lsu = (lsu_req_addr[0]   != 1'b0);
+      RV_LSU_W:  unaligned_lsu = (lsu_req_addr[1:0] != 2'd0);
+      RV_LSU_WU: unaligned_lsu = (lsu_req_addr[1:0] != 2'd0);
+      RV_LSU_D:  unaligned_lsu = (lsu_req_addr[2:0] != 3'd0);
       default:   unaligned_lsu = 'b0;
     endcase
 

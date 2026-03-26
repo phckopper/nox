@@ -14,15 +14,15 @@ module axi_mem
 );
   axi_tid_t axi_rid_ff, next_axi_rid;
   axi_tid_t axi_wid_ff, next_axi_wid;
-  localparam ADDR_RAM  = $clog2((MEM_KB*1024)/4);
-  localparam NUM_WORDS = (MEM_KB*1024)/4;
-  logic [NUM_WORDS-1:0][31:0] mem_ff;
-  logic [NUM_WORDS-1:0][31:0] mem_loading;
+  localparam ADDR_RAM  = $clog2((MEM_KB*1024)/8);  // 64-bit (8-byte) words
+  localparam NUM_WORDS = (MEM_KB*1024)/8;
+  logic [NUM_WORDS-1:0][63:0] mem_ff;
+  logic [NUM_WORDS-1:0][63:0] mem_loading;
   logic [ADDR_RAM-1:0] rd_addr;
   logic [ADDR_RAM-1:0] wr_addr;
-  logic [31:0] next_wdata;
-  logic [1:0] byte_sel_rd;
-  logic [1:0] byte_sel_wr;
+  logic [63:0] next_wdata;
+  logic [2:0] byte_sel_rd;
+  logic [2:0] byte_sel_wr;
   logic we_mem;
   logic bvalid_ff, next_bvalid;
   logic axi_rd_vld_ff, next_axi_rd;
@@ -39,8 +39,8 @@ module axi_mem
   logic next_char, char_ff;
   logic next_num, num_ff;
   typedef struct packed {
-    logic [31:0]     start_addr;
-    logic [31:0]     end_addr;
+    logic [63:0]     start_addr;
+    logic [63:0]     end_addr;
   } s_signature_t;
 
   s_signature_t sig_ff, next_sig;
@@ -86,21 +86,21 @@ module axi_mem
         use_sig_file = 1'b1;
       end
 
-      for (logic [31:0] addr = sig_ff.start_addr; addr < sig_ff.end_addr; addr +=4) begin
+      for (logic [63:0] addr = sig_ff.start_addr; addr < sig_ff.end_addr; addr +=8) begin
         if (DISPLAY_TEST)
-          $display("[0x%x] - %x",addr,mem_ff[addr>>2]);
+          $display("[0x%x] - %x",addr,mem_ff[addr[ADDR_RAM+2:3]]);
         if (use_sig_file) begin
-          $fdisplay(sig_fd, "%x", mem_ff[addr>>2]);
+          $fdisplay(sig_fd, "%x", mem_ff[addr[ADDR_RAM+2:3]]);
         end
       end
     end
   endfunction
 
-  function automatic logic [7:0] find_byte(logic [31:0] data_in);
+  function automatic logic [7:0] find_byte(logic [63:0] data_in);
     logic [7:0] data;
     data = data_in[7:0];
 
-    for (int i=0;i<4;i++) begin
+    for (int i=0;i<8;i++) begin
       if (data == 'h0) begin
         data = data_in[(i*8)+:8];
       end
@@ -112,29 +112,30 @@ module axi_mem
   endfunction
 
   function automatic axi_data_t mask_axi_w(axi_data_t    data,
-                                           logic [1:0]   byte_sel,
+                                           logic [2:0]   byte_sel,
                                            axi_wr_strb_t wstrb);
     axi_data_t data_o;
-    for (int i=0;i<4;i++) begin
+    for (int i=0;i<8;i++) begin
       data_o[i*8+:8] = (wstrb[i]) ? data[i*8+:8] : 'h0;
     end
-    data_o = data_o << ('h8*byte_sel);
+    data_o = data_o << (8*byte_sel);
 
     return data_o;
   endfunction
 
   function automatic axi_data_t mask_axi(axi_data_t  data,
-                                         logic [1:0] byte_sel,
+                                         logic [2:0] byte_sel,
                                          axi_size_t  sz);
     axi_data_t data_o;
-    logic [31:0] mask_val;
+    logic [63:0] mask_val;
     case (sz)
-      AXI_BYTE:       mask_val = 'hFF;
-      AXI_HALF_WORD:  mask_val = 'hFFFF;
-      default:        mask_val = 'hFFFF_FFFF;
+      AXI_BYTE:       mask_val = 64'hFF;
+      AXI_HALF_WORD:  mask_val = 64'hFFFF;
+      AXI_WORD:       mask_val = 64'hFFFF_FFFF;
+      default:        mask_val = 64'hFFFF_FFFF_FFFF_FFFF;
     endcase
 
-    data_o = data & (mask_val << ('h8*byte_sel));
+    data_o = data & (mask_val << (8*byte_sel));
     return data_o;
   endfunction
 
@@ -143,7 +144,7 @@ module axi_mem
     next_wr_addr = axi_addr_t'('0);
     next_axi_wr  = axi_wr_vld_ff;
     next_wr_size = axi_size_t'('h0);
-    wr_addr      = wr_addr_ff[2+:ADDR_RAM];
+    wr_addr      = wr_addr_ff[3+:ADDR_RAM];  // 8-byte aligned
     byte_sel_wr  = 'h0;
     we_mem       = 'b0;
     next_bvalid  = 'b0;
@@ -167,12 +168,12 @@ module axi_mem
       next_wr_addr = axi_mosi.awaddr;
       next_axi_wr  = 'b1;
       next_wr_size = axi_mosi.awsize;
-      if (axi_mosi.awaddr == 'hD000_0000) begin
+      if (axi_mosi.awaddr == 64'hD000_0000) begin
         next_dec_csr = 'b1;
       end
     end
     if (axi_mosi.wvalid && axi_wr_vld_ff) begin
-      byte_sel_wr = wr_addr_ff[1:0];
+      byte_sel_wr = wr_addr_ff[2:0];
       next_wdata  = mask_axi_w(axi_mosi.wdata, byte_sel_wr, axi_mosi.wstrb);
       we_mem      = 'b1;
       next_bvalid = 'b1;
@@ -193,22 +194,22 @@ module axi_mem
     // Address phase
     if (axi_mosi.awvalid && axi_miso.awready) begin
       next_axi_wid = axi_mosi.awid;
-      if (axi_mosi.awaddr == 'hA000_0000 || axi_mosi.awaddr == 'hD000_0008) begin
+      if (axi_mosi.awaddr == 64'hA000_0000 || axi_mosi.awaddr == 64'hD000_0008) begin
         next_char = 'b1;
       end
-      else if (axi_mosi.awaddr == 'hB000_0000) begin
+      else if (axi_mosi.awaddr == 64'hB000_0000) begin
         next_num = 'b1;
       end
-      else if (axi_mosi.awaddr == 'hC000_0010) begin
+      else if (axi_mosi.awaddr == 64'hC000_0010) begin
         next_start_sig = 'b1;
       end
-      else if (axi_mosi.awaddr == 'hC000_0020) begin
+      else if (axi_mosi.awaddr == 64'hC000_0020) begin
         next_end_sig = 'b1;
       end
-      else if (axi_mosi.awaddr == 'hC000_0000) begin
+      else if (axi_mosi.awaddr == 64'hC000_0000) begin
         next_fin = 'b1;
       end
-      else if (axi_mosi.awaddr == 'hD000_0000) begin
+      else if (axi_mosi.awaddr == 64'hD000_0000) begin
         next_dec_csr = 'b1;
       end
       else begin
@@ -233,7 +234,7 @@ module axi_mem
       end
       /* verilator lint_on UNOPTTHREADS */
       else if (~char_ff && ~num_ff) begin
-        byte_sel_wr = wr_addr_ff[1:0];
+        byte_sel_wr = wr_addr_ff[2:0];
         next_wdata  = mask_axi_w(axi_mosi.wdata, byte_sel_wr, axi_mosi.wstrb);
         we_mem      = 'b1;
         if (csr_decode_ff) begin
@@ -245,13 +246,6 @@ module axi_mem
 `endif
 
     next_bvalid = axi_mosi.wlast;
-    //if (bvalid_ff) begin
-      //next_bvalid = ~axi_mosi.bready;
-    //end
-
-    //if (axi_wr_vld_ff) begin
-      //next_axi_wr = ~(axi_mosi.wvalid && axi_mosi.wlast);
-    //end
 
     axi_miso.bvalid = bvalid_ff;
     axi_miso.bid    = axi_wid_ff;
@@ -261,7 +255,7 @@ module axi_mem
     next_rd_data = rd_data_ff;
     next_axi_rd  = 'b0;
     byte_sel_rd  = 'h0;
-    rd_addr      = axi_mosi.araddr[2+:ADDR_RAM];
+    rd_addr      = axi_mosi.araddr[3+:ADDR_RAM];  // 8-byte aligned
     axi_miso.arready = 'b1;
     raw_hit = (axi_mosi.arvalid && we_mem && (axi_mosi.araddr == wr_addr_ff));
     next_axi_rid = axi_rid_ff;
@@ -272,13 +266,11 @@ module axi_mem
 
     if (axi_mosi.arvalid && axi_miso.arready) begin
       next_axi_rd  = 'b1;
-      byte_sel_rd  = axi_mosi.araddr[1:0];
+      byte_sel_rd  = axi_mosi.araddr[2:0];
       next_axi_rid = axi_mosi.arid;
       if (raw_hit) begin
-        // Start from current memory state so bytes not covered by the pending
-        // write reflect any earlier committed writes to the same word.
         next_rd_data = mem_ff[rd_addr];
-        for (int i=0;i<4;i++) begin
+        for (int i=0;i<8;i++) begin
           if (axi_mosi.wstrb[i])
             next_rd_data[i*8+:8] = axi_mosi.wdata[i*8+:8];
         end
@@ -346,7 +338,7 @@ module axi_mem
       end
 `endif
       if (we_mem) begin
-        for (int i=0;i<4;i++) begin
+        for (int i=0;i<8;i++) begin
           if (axi_mosi.wstrb[i])
             mem_ff[wr_addr][i*8+:8] <= axi_mosi.wdata[i*8+:8];
         end

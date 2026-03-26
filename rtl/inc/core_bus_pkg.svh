@@ -3,21 +3,22 @@
   //package core_bus_pkg;
 
   `ifndef CB_ADDR_WIDTH
-    `define CB_ADDR_WIDTH         32
+    `define CB_ADDR_WIDTH         64
   `endif
 
   `ifndef CB_DATA_WIDTH
-    `define CB_DATA_WIDTH         32
+    `define CB_DATA_WIDTH         64
   `endif
 
   typedef logic [`CB_ADDR_WIDTH-1:0] cb_addr_t;
   typedef logic [`CB_DATA_WIDTH-1:0] cb_data_t;
   typedef logic [(`CB_DATA_WIDTH/8)-1:0] cb_strb_t;
 
-  typedef enum logic [1:0] {
+  typedef enum logic [2:0] {
     CB_BYTE,
     CB_HALF_WORD,
-    CB_WORD
+    CB_WORD,
+    CB_DWORD        // RV64: 8-byte doubleword
   } cb_size_t;
 
   typedef enum logic [1:0] {

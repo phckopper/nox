@@ -132,6 +132,40 @@ module decode
           end
         endcase
       end
+      // RV64I: OP-IMM-32 — ADDIW, SLLIW, SRLIW, SRAIW (32-bit immediate ops)
+      RV_OP_IMM_32: begin
+        next_id_ex.f3        = instr_dec.f3;
+        next_id_ex.rs1_op    = REG_RF;
+        next_id_ex.rs2_op    = IMM;
+        next_id_ex.imm       = gen_imm(fetch_instr_i, I_IMM);
+        next_id_ex.rshift    = instr_dec[30] ? RV_SRA : RV_SRL;
+        next_id_ex.we_rd     = 1'b1;
+        next_id_ex.is_word_op = 1'b1;
+        if (instr_dec.f3 == RV_F3_SLL || instr_dec.f3 == RV_F3_SRL_SRA)
+          next_id_ex.funct7_raw = fetch_instr_i[31:25];
+      end
+      // RV64I: OP-32 — ADDW, SUBW, SLLW, SRLW, SRAW + RV64M MULW/DIVW/REMW
+      RV_OP_32: begin
+        next_id_ex.f3         = instr_dec.f3;
+        next_id_ex.funct7_raw = fetch_instr_i[31:25];
+        next_id_ex.rs1_op     = REG_RF;
+        next_id_ex.rs2_op     = REG_RF;
+        next_id_ex.we_rd      = 1'b1;
+        next_id_ex.is_word_op = 1'b1;
+        case (fetch_instr_i[31:25])
+          7'b000_0001: begin                         // RV64M: MULW/DIVW/DIVUW/REMW/REMUW
+            next_id_ex.is_muldiv = 1'b1;
+          end
+          7'b010_0000: begin                         // SUBW/SRAW
+            next_id_ex.f7     = RV_F7_1;
+            next_id_ex.rshift = RV_SRA;
+          end
+          default: begin                             // ADDW/SLLW/SRLW
+            next_id_ex.f7     = RV_F7_0;
+            next_id_ex.rshift = RV_SRL;
+          end
+        endcase
+      end
       RV_JAL: begin
         next_id_ex.jump   = 1'b1;
         next_id_ex.f3     = RV_F3_ADD_SUB;
@@ -231,7 +265,7 @@ module decode
             default: begin
               if (fetch_valid_i && id_ready_i) begin
                 next_id_ex.trap.active  = 1'b1;
-                next_id_ex.trap.mtval   = fetch_instr_i;
+                next_id_ex.trap.mtval   = {32'b0, fetch_instr_i};
                 `P_MSG ("DEC", "Instruction non-supported")
               end
             end
@@ -240,7 +274,7 @@ module decode
         else begin
           if (fetch_valid_i && id_ready_i) begin
             next_id_ex.trap.active  = 1'b1;
-            next_id_ex.trap.mtval   = fetch_instr_i;
+            next_id_ex.trap.mtval   = {32'b0, fetch_instr_i};
             `P_MSG ("DEC", "Instruction non-supported")
           end
         end
@@ -248,7 +282,7 @@ module decode
       default: begin
         if (fetch_valid_i && id_ready_i) begin
           next_id_ex.trap.active  = 1'b1;
-          next_id_ex.trap.mtval   = fetch_instr_i;
+          next_id_ex.trap.mtval   = {32'b0, fetch_instr_i};
           `P_MSG ("DEC", "Instruction non-supported")
         end
       end

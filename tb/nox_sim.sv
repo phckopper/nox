@@ -128,7 +128,7 @@ module nox_sim
     .clk              (clk),
     .arst             (rst),
     .start_fetch_i    ('b1),
-    .start_addr_i     (`ENTRY_ADDR),
+    .start_addr_i     (64'(`ENTRY_ADDR)),
 `ifndef RV_COMPLIANCE
     .irq_i            (irq_stim),
 `else
@@ -147,21 +147,33 @@ module nox_sim
   );
 
   // synthesis translate_off
+  // Write a 32-bit word into 64-bit memory.
+  // addr_val is a 4-byte word index; pack into the correct half of the 8-byte entry.
   function automatic void writeWordIRAM(addr_val, word_val);
     /*verilator public*/
     logic [31:0] addr_val;
     logic [31:0] word_val;
-    u_iram.mem_loading[addr_val]        = word_val;
+    if (addr_val[0]) begin
+      u_iram.mem_loading[addr_val>>1][63:32]        = word_val;
 `ifndef RV_COMPLIANCE
-    u_iram_mirror.mem_loading[addr_val] = word_val;
+      u_iram_mirror.mem_loading[addr_val>>1][63:32] = word_val;
 `endif
+    end else begin
+      u_iram.mem_loading[addr_val>>1][31:0]        = word_val;
+`ifndef RV_COMPLIANCE
+      u_iram_mirror.mem_loading[addr_val>>1][31:0] = word_val;
+`endif
+    end
   endfunction
 
   function automatic void writeWordDRAM(addr_val, word_val);
     /*verilator public*/
     logic [31:0] addr_val;
     logic [31:0] word_val;
-    u_dram.mem_loading[addr_val] = word_val;
+    if (addr_val[0])
+      u_dram.mem_loading[addr_val>>1][63:32] = word_val;
+    else
+      u_dram.mem_loading[addr_val>>1][31:0] = word_val;
   endfunction
   // synthesis translate_on
 endmodule

@@ -1,7 +1,7 @@
 `ifndef _RISCV_PKG_
 `define _RISCV_PKG_
-  `define PC_WIDTH      32
-  `define XLEN          32
+  `define PC_WIDTH      64
+  `define XLEN          64
 
   `define RV_MST_MIE    3
   `define RV_MST_MPIE   7
@@ -9,17 +9,17 @@
   `define RV_MIE_MTIP   7
   `define RV_MIE_MSIP   3
 
-  typedef logic [`XLEN-1:0]         instr_raw_t;
+  typedef logic [31:0]              instr_raw_t;  // Instructions are always 32-bit
   typedef logic [`PC_WIDTH-1:0]     pc_t;
   typedef logic [`XLEN-1:0]         lsu_addr_t;
   typedef logic [`XLEN-1:0]         b_addr_t;
   typedef logic [`XLEN-1:0]         j_addr_t;
 
-  typedef logic [$clog2(`XLEN)-1:0] raddr_t;
+  typedef logic [4:0]               raddr_t;      // 32 registers → always 5-bit address
   typedef logic [`XLEN-1:0]         rdata_t;
   typedef logic [(`XLEN*2)-1:0]     rdata_ext_t;
   typedef logic [`XLEN-1:0]         imm_t;
-  typedef logic [4:0]               shamt_t;
+  typedef logic [5:0]               shamt_t;      // RV64: 6-bit shift amounts (0–63)
   typedef logic [`XLEN-1:0]         alu_t;
   typedef logic [11:0]              csr_addr_t;
 
@@ -76,8 +76,10 @@
     RV_LSU_B  = 3'b000,
     RV_LSU_H  = 3'b001,
     RV_LSU_W  = 3'b010,
+    RV_LSU_D  = 3'b011,    // RV64: doubleword (LD/SD)
     RV_LSU_BU = 3'b100,
-    RV_LSU_HU = 3'b101
+    RV_LSU_HU = 3'b101,
+    RV_LSU_WU = 3'b110     // RV64: unsigned word (LWU)
   } lsu_w_t;
 
   typedef enum logic [1:0] {
@@ -195,7 +197,7 @@
 
   typedef struct packed {
     pc_t        pc_addr;
-    instr_raw_t mtval;
+    logic [`XLEN-1:0] mtval;    // RV64: XLEN-wide (stores faulting addr or instruction)
     logic       active;
   } s_trap_info_t;
 
@@ -241,8 +243,11 @@
     logic         is_muldiv;
     // P8-P10: raw funct7 bits for Zba/Zbb/Zicond dispatch in execute
     logic [6:0]   funct7_raw;
-    // P11: RV32A — AMO operation type (funct5 from atomic instruction encoding)
+    // P11: RV-A — AMO operation type (funct5 from atomic instruction encoding)
     amo_op_t      amo_op;
+    // RV64: word-width operation flag (*W instructions: ADDIW, SLLW, DIVW, etc.)
+    // When set, execute truncates result to 32 bits and sign-extends to 64.
+    logic         is_word_op;
   } s_id_ex_t;
 
   typedef struct packed {
@@ -282,12 +287,12 @@
     imm_t imm_res;
 
     unique case(imm_type)
-      I_IMM:    imm_res = {{21{instr[31]}},instr[30:25],instr[24:21],instr[20]};
-      S_IMM:    imm_res = {{21{instr[31]}},instr[30:25],instr[11:8],instr[7]};
-      B_IMM:    imm_res = {{20{instr[31]}},instr[7],instr[30:25],instr[11:8],1'b0};
-      U_IMM:    imm_res = {instr[31],instr[30:20],instr[19:12],12'd0};
-      J_IMM:    imm_res = {{12{instr[31]}},instr[19:12],instr[20],instr[30:25],instr[24:21],1'b0};
-      CSR_IMM:  imm_res = {{27'h0},instr[19:15]};
+      I_IMM:    imm_res = {{53{instr[31]}},instr[30:25],instr[24:21],instr[20]};
+      S_IMM:    imm_res = {{53{instr[31]}},instr[30:25],instr[11:8],instr[7]};
+      B_IMM:    imm_res = {{52{instr[31]}},instr[7],instr[30:25],instr[11:8],1'b0};
+      U_IMM:    imm_res = {{33{instr[31]}},instr[30:20],instr[19:12],12'd0};
+      J_IMM:    imm_res = {{44{instr[31]}},instr[19:12],instr[20],instr[30:25],instr[24:21],1'b0};
+      CSR_IMM:  imm_res = {{59{1'b0}},instr[19:15]};
       default:  `ERROR("Immediate encoding not valid!",imm_type)
     endcase
     return  imm_res;

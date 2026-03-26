@@ -33,7 +33,8 @@
   //`define M_ARCH_ID     "32I"  //needs to follow JEDEC
   //`define M_IMPL_ID     "4STG"
   `define M_HART_ID     0
-  `define M_ISA_ID      'h40001100  // bit 12 = M extension
+  // RV64: MXL=2 (bits 63:62), I (bit 8), M (bit 12), A (bit 0), C (bit 2, future)
+  `define M_ISA_ID      64'h8000000000001101
 
   // Reset Macros for different sets
   `ifdef ACT_H_RESET
