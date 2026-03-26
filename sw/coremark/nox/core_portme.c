@@ -29,12 +29,12 @@ Original Author: Shay Gal-on
 #define PRINT_ADDR        0xD0000008
 #define STRING_TEST       "Test!"
 
-volatile uint32_t* const addr_leds  = (uint32_t*) LEDS_ADDR;
-volatile uint32_t* const addr_print = (uint32_t*) PRINT_ADDR;
-volatile uint32_t* const uart_stats = (uint32_t*) UART_STATS;
-volatile uint32_t* const uart_print = (uint32_t*) UART_TX;
-volatile uint32_t* const uart_rx    = (uint32_t*) UART_RX;
-volatile uint32_t* const uart_cfg   = (uint32_t*) UART_CFG;
+volatile unsigned long* const addr_leds  = (unsigned long*) LEDS_ADDR;
+volatile unsigned long* const addr_print = (unsigned long*) PRINT_ADDR;
+volatile unsigned long* const uart_stats = (unsigned long*) UART_STATS;
+volatile unsigned long* const uart_print = (unsigned long*) UART_TX;
+volatile unsigned long* const uart_rx    = (unsigned long*) UART_RX;
+volatile unsigned long* const uart_cfg   = (unsigned long*) UART_CFG;
 
 #ifdef UART_SIM
 void _putchar(char character){
@@ -73,35 +73,17 @@ volatile ee_s32 seed5_volatile = 0;
 CORETIMETYPE
 barebones_clock()
 {
-	register unsigned int temp __asm__ ("t0");
-	asm volatile ("csrr t0, cycle\n\t");
-	unsigned int ticks = temp;
+	// RV64: csrr reads full 64-bit cycle counter
+	register unsigned long temp;
+	asm volatile ("csrr %0, cycle" : "=r"(temp));
 	return temp;
-/*#error \*/
-    /*"You must implement a method to measure time in barebones_clock()! This function should return current time.\n"*/
 }
 
 CORETIMETYPE nox_cpu_get_cycle(void) {
-
-  union {
-    uint64_t uint64;
-    uint32_t uint32[sizeof(uint64_t)/sizeof(uint32_t)];
-  } cycles;
-
-  register uint32_t tmp1, tmp2, tmp3;
-  while(1) {
-    tmp1 = read_csr(0xC80);
-    tmp2 = read_csr(0xC00);
-    tmp3 = read_csr(0xC80);
-    if (tmp1 == tmp3) {
-      break;
-    }
-  }
-
-  cycles.uint32[0] = tmp2;
-  cycles.uint32[1] = tmp3;
-
-  return cycles.uint64;
+  // RV64: single 64-bit read, no need for CYCLEH loop
+  register unsigned long cycles;
+  asm volatile ("csrr %0, cycle" : "=r"(cycles));
+  return cycles;
 }
 /* Define : TIMER_RES_DIVIDER
         Divider to trade off timer resolution and total time that can be

@@ -34,15 +34,15 @@
 extern void trap_entry(void);
 extern void trap_exit(void);
 
-extern uint32_t  _start_vector;
-extern uint32_t  _stored_data;
-extern uint32_t  _start_data;
-extern uint32_t  _end_data;
-extern uint32_t  _start_bss;
-extern uint32_t  _end_bss;
-extern uint32_t  _end_stack;
-extern uint32_t  _start_heap;
-extern uint32_t  _my_global_pointer;
+extern unsigned long  _start_vector;
+extern unsigned long  _stored_data;
+extern unsigned long  _start_data;
+extern unsigned long  _end_data;
+extern unsigned long  _start_bss;
+extern unsigned long  _end_bss;
+extern unsigned long  _end_stack;
+extern unsigned long  _start_heap;
+extern unsigned long  _my_global_pointer;
 
 static int zeroed_variable_in_bss;
 static int initialized_variable_in_data = 42;
@@ -52,27 +52,25 @@ extern void irq_callback(void);
 extern void __attribute__((noinline)) main(void);
 
 void __attribute__((section(".init"),naked)) _reset(void) {
-    register uint32_t *src, *dst;
+    register unsigned long *src, *dst;
 
-    // asm volatile("la gp, _my_global_pointer");
-    // asm volatile("la sp, _end_stack");
     /* Set up vectored interrupt, with starting at offset 0x100 */
     asm volatile("csrw mtvec, %0":: "r"((uint8_t *)(&_start_vector) + 1));
 
-    src = (uint32_t *) &_stored_data;
-    dst = (uint32_t *) &_start_data;
+    src = (unsigned long *) &_stored_data;
+    dst = (unsigned long *) &_start_data;
 
     /* Copy the .data section from flash to RAM. */
-    while (dst < (uint32_t *)&_end_data) {
+    while (dst < (unsigned long *)&_end_data) {
         *dst = *src;
         dst++;
         src++;
     }
 
     /* Initialize the BSS section to 0 */
-    dst = &_start_bss;
-    while (dst < (uint32_t *)&_end_bss) {
-        *dst = 0U;
+    dst = (unsigned long *)&_start_bss;
+    while (dst < (unsigned long *)&_end_bss) {
+        *dst = 0UL;
         dst++;
     }
 
@@ -80,12 +78,12 @@ void __attribute__((section(".init"),naked)) _reset(void) {
     main();
 }
 
-static uint32_t synctrap_cause = 0;
+static unsigned long synctrap_cause = 0;
 
 void isr_synctrap(void)
 {
   write_csr(mip, (0 << IRQ_M_EXT));
-  uint32_t mepc_return = read_csr(mepc)+0x4;
+  unsigned long mepc_return = read_csr(mepc)+0x4;
   // If not vectored IRQ, do not add 4 to the MEPC
   write_csr(mepc, mepc_return);
   /*irq_callback();*/

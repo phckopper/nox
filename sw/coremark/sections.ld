@@ -66,7 +66,7 @@ SECTIONS
     _end_data = .;
   } > DRAM
 
-  . = ALIGN(. != 0 ? 32 / 8 : 1);
+  . = ALIGN(8);
    _start_bss = .;
 
   .bss : AT (_stored_data) {
@@ -79,7 +79,7 @@ SECTIONS
            .bss section disappears because there are no input sections.
            FIXME: Why do we need it? When there is no .bss section, we do not
            pad the .data section.  */
-    . = ALIGN(. != 0 ? 32 / 8 : 1);
+    . = ALIGN(8);
   } > DRAM
 
   .sbss : AT (_stored_data) {
