@@ -43,28 +43,33 @@ RV32A (atomics) has since been added; a re-synthesis run is pending.
 - **CoreMark/MHz: ~2.876** (+0.1% vs P5b), crcfinal=0x25b5 ✓ (1500 iter)
 - Total ticks: 520,947,845 | Cycles/iteration: ~347,298
 
-### After O3+unroll+inline (2026-03-25) — GCC -O3 -funroll-loops -finline-functions ← CURRENT BEST
-- **CoreMark/MHz: ~2.960** (+2.9% vs BHT), crcfinal=0x25b5 ✓ (1500 iter)
-- Total ticks: 506,072,095 | Cycles/iteration: ~337,381
-- Built with GCC 15.2.0 (`-O3 -funroll-loops -finline-functions -march=rv32im_zba_zbb_zicond_zicsr`)
-- ELF: `sw/coremark/coremark_1500iter_O3_unroll_inline_rv32im_zba_zbb_zicond.elf`
+### After P14+P17 (2026-03-26) — 128-entry BTB + full Zbb ← CURRENT BEST
+- **CoreMark/MHz: 2.893** (+5.6% vs P8+P9+P10), crcfinal=0x25b5 ✓ (1500 iter, 10.37s)
+- Total ticks: 518,472,885 | Cycles/iteration: 345,649
+- Built with xPack GCC 10.2.0 (`-O2 -march=rv32im_zba_zbb_zicond`)
+- ELF: `sw/coremark/coremark_1500iter_O2_rv32im_zba_zbb_zicond.elf`
 
-#### Current stall breakdown (1500-iter run, perf counters):
+#### Current stall breakdown (1500-iter O2 run, perf counters):
 | Source | Cycles | % of total |
 |--------|--------|-----------|
-| Load-use hazard | 26.1M | **4.0%** |
-| Fetch bubbles (total) | 27.8M | **4.3%** |
-| — Branch mispredictions | 7.31M × ~2 cyc | ~14.6M (2.2%) |
-| — JAL BTB misses | 1.72M × ~2 cyc | ~3.4M (0.5%) |
-| — JALR redirects | 0.22M × ~2 cyc | ~0.4M (0.1%) |
+| Load-use hazard | 31.0M | **4.8%** |
+| Fetch bubbles (total) | 24.7M | **3.8%** |
+| — Branch mispredictions | 6.99M × ~2 cyc | ~14.0M (2.2%) |
+| — JAL BTB misses | 0.68M × ~2 cyc | ~1.4M (0.2%) |
+| — JALR redirects | 0.56M × ~2 cyc | ~1.1M (0.2%) |
 | MulDiv stall | 14.1M | **2.2%** |
-| **IPC** | | **0.874** |
+| **IPC** | | **0.871** |
 
-Branch prediction: **true accuracy 90.1%** (66.3M/73.6M) | taken accuracy 85.2% | taken 50% / not-taken 50%
-- Taken, not predicted: 5.42M — BTB miss or BHT counter<2 (loop unrolling creates cold branches)
-- Not-taken, predicted: 1.89M — BHT aliasing/slow decay
-- JAL BTB hit rate: **98.9%** | JALR RAS hit rate: **89.3%**
-- Load-use hazard down 16% vs O2 — compiler scheduled around more hazards with O3
+Branch prediction: **true accuracy 91.2%** (72.8M/79.8M) | taken accuracy 91.3% | taken 55% / not-taken 45%
+- Taken, not predicted: 3.83M — BTB miss or BHT counter<2
+- Not-taken, predicted: 3.16M — BHT aliasing/slow decay
+- JAL BTB hit rate: **99.5%** | JALR RAS/BTB hit rate: **82.7%**
+
+### After O3+unroll+inline (2026-03-25) — GCC -O3 -funroll-loops -finline-functions
+- **CoreMark/MHz: ~2.960** (+2.9% vs BHT), crcfinal=0x25b5 ✓ (1500 iter, old simulator)
+- Total ticks: 506,072,095 | Cycles/iteration: ~337,381
+- Note: required GCC 15.2.0 (`-march=rv32im_zba_zbb_zicond_zicsr`); docker xPack 10.2.0 does not support -O3 with zicond
+- ELF: `sw/coremark/coremark_1500iter_O3_unroll_inline_rv32im_zba_zbb_zicond.elf`
 
 ---
 
@@ -83,39 +88,30 @@ Expected gain: **+20% raw CoreMark score** (CM/MHz unchanged, raw score ∝ freq
 
 ---
 
-### P13 — Gshare branch predictor
+### P13 — Gshare branch predictor (DEFERRED — needs pipeline GHR snapshot)
 **File:** `rtl/branch_predictor.sv`
 
 Replace the bimodal BHT with a gshare predictor: XOR the fetch PC with a Global History
 Register (GHR) before indexing the BHT. The GHR shifts in the outcome of every resolved
-branch (1=taken, 0=not-taken) and is speculatively updated at prediction time, with
-rollback on misprediction.
+branch (1=taken, 0=not-taken).
 
-The current bimodal predictor is near its ceiling (~90.1%) for CoreMark: data-dependent
-branches (list sort comparisons, state machine transitions) alternate taken/not-taken in
-a pattern correlated with recent history. Gshare captures that correlation.
+**Why deferred:** A non-speculative GHR (updated only at execute, 2 cycles after fetch)
+causes prediction and update to index *different* BHT entries — the GHR shifts 1–2 bits
+between fetch-time query and execute-time update, completely de-correlating the predictor.
+Attempt resulted in branch accuracy falling from 91% to 72% (+11% total ticks, invalid).
 
-Implementation notes:
-- GHR width of 8–12 bits is sufficient for CoreMark's working set.
-- Speculative GHR update on prediction; restore on misprediction from execute.
-- The misprediction recovery path already passes `fetch_req_i` from execute; the restored
-  GHR value can travel alongside `fetch_addr_i`.
-- No change to BTB, RAS, or the pipeline hazard logic.
+**Correct implementation requires:**
+1. Propagate a GHR snapshot alongside each instruction through OT FIFO → L0 FIFO →
+   decode pipeline register → execute.
+2. Return the snapshot as `update_ghr_i` to `branch_predictor` so that the BHT entry
+   trained at execute matches the entry queried at fetch.
+3. On misprediction, restore the GHR to the snapshot value (already on the redirect path).
 
-Expected gain: **+0.5–1.0% CM/MHz** (reduces 7.31M mispredict events).
+This is a moderate pipeline change touching fetch, decode, and the branch predictor interface.
+
+Expected gain: **+0.5–1.0% CM/MHz** (reduces ~7M mispredict events).
 
 ---
-
-### P14 — Expand BTB from 64 to 128 entries
-**File:** `rtl/branch_predictor.sv`
-
-Change `BTB_ENTRIES` from 64 to 128 (index width 6→7 bits). With the O3+inline build,
-JAL BTB misses increased from 0.84M to 1.72M because inlining creates many unique call
-sites that start cold. More BTB entries reduce eviction conflicts.
-
-Area cost: 128 × (1 + 1 + 25 + 32) bits ≈ 960 bytes — negligible.
-
-Expected gain: **+0.2–0.4% CM/MHz** (reduces 1.72M JAL BTB miss events).
 
 ---
 
@@ -139,21 +135,15 @@ Expected CoreMark gain: **+0.3–0.8%** | General workload gain: **+0.5–1.5%**
 
 ---
 
-### P16 — Profile-guided optimization (PGO) + LTO
+### P16 — LTO (INVALID for CoreMark)
 **Files:** `sw/coremark/` (build system only — no RTL changes)
 
-Rebuild CoreMark in two passes:
-1. Instrument build (`-fprofile-generate`) → run once to collect branch/frequency profiles.
-2. Optimized build (`-fprofile-use -fprofile-correction`) → GCC uses the profile to inline
-   hot paths more aggressively, reorder basic blocks for cache locality, and avoid unrolling
-   cold loops.
+`-flto` with the available xPack GCC 10.2.0 inlines so aggressively across translation
+units that the benchmark runs in only ~12M ticks instead of ~520M (crcfinal=0xbced, wrong).
+LTO eliminates the benchmark work entirely through constant propagation — **invalid result**.
 
-Combine with `-flto` (link-time optimization) for cross-translation-unit inlining of hot
-functions that `-finline-functions` misses within a single compilation unit.
-
-This is a compiler-only change; RTL is unchanged. The gain compounds with existing O3 flags.
-
-Expected gain: **+1–3% CM/MHz** over the current O3+unroll+inline baseline.
+PGO (`-fprofile-generate` / `-fprofile-use`) remains theoretically valid but requires a
+two-pass build workflow not supported by the current Makefile setup. Skip for now.
 
 ---
 
@@ -265,6 +255,25 @@ combinational checks on every memory access.
 ---
 
 ## Completed Improvements
+
+### P14 — 128-entry BTB ✅ DONE (2026-03-26)
+**File:** `rtl/branch_predictor.sv`
+**Actual gain: part of +5.6% CM/MHz** (2.739 → 2.893; 547,698,287 → 518,472,885 ticks)
+
+Changed `BTB_ENTRIES` from 64 to 128 (index width 6→7 bits, tag 25→23 bits). JAL BTB
+hit rate improved from ~97.1% to 99.5%; fetch bubbles fell from ~70M to 24.7M cycles.
+
+---
+
+### P17 — Full Zbb instruction set ✅ DONE (2026-03-26)
+**File:** `rtl/execute.sv`
+**Actual gain: combined with P14 above**
+
+Added `clz`/`ctz`/`cpop`/`rol` (funct3=001, funct7=0x30, imm[4:0] disambiguates) and
+`ror`/`rori` (funct7=0x30), `orc.b` (funct7=0x28), `rev8` (funct7=0x35) in funct3=101.
+No decode.sv changes needed — funct7_raw was already captured for OP and OP-IMM shifts.
+
+---
 
 ### O3 + loop unrolling + inlining ✅ DONE (2026-03-25)
 **File:** `sw/coremark/nox/startup.c`, build system
