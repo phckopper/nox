@@ -51,6 +51,7 @@ module nox
   ready_t           fetch_ready;
   instr_raw_t       fetch_instr;
   logic             fetch_bp_taken;
+  logic             fetch_is_compressed;
   s_id_ex_t         id_ex;
   rdata_t           rs1_data;
   rdata_t           rs2_data;
@@ -167,6 +168,7 @@ module nox
     .fetch_instr_o         (fetch_instr),
     .fetch_bp_taken_o      (fetch_bp_taken),
     .fetch_bp_predict_target_o (fetch_bp_predict_target),
+    .fetch_is_compressed_o (fetch_is_compressed),
     // Trap error fetching
     .trap_info_o           (fetch_trap)
   );
@@ -186,6 +188,7 @@ module nox
     .fetch_instr_i         (fetch_instr),
     .fetch_bp_taken_i          (fetch_bp_taken),
     .fetch_bp_predict_target_i (fetch_bp_predict_target),
+    .fetch_is_compressed_i (fetch_is_compressed),
     // From MEM/WB stg I/F
     .wb_dec_i              (wb_dec),
     // To EXEC stg I/F

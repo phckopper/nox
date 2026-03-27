@@ -24,6 +24,7 @@ module decode
   input   instr_raw_t   fetch_instr_i,
   input   logic         fetch_bp_taken_i,          // BP predicted this instruction taken
   input   pc_t          fetch_bp_predict_target_i, // P2: BP predicted target address
+  input   logic         fetch_is_compressed_i,     // Instruction was compressed (16-bit)
   // From MEM/WB stg I/F
   input   s_wb_t        wb_dec_i,
   // To EXEC stg I/F
@@ -41,6 +42,12 @@ module decode
   logic       wait_inst_ff, next_wait_inst;
   logic       wfi_stop_ff, next_wfi_stop;
   s_id_ex_t   id_ex_ff, next_id_ex;
+
+  // PC override: used when decode_pc_update arrives while waiting for an instruction.
+  // Instead of pre-subtracting the unknown instruction width, we store the target
+  // and apply it directly when the next instruction is consumed.
+  logic       pc_override_ff, next_pc_override;
+  pc_t        pc_override_val_ff, next_pc_override_val;
 
   always_comb begin
     next_vld_dec  = dec_valid_ff;
@@ -288,8 +295,18 @@ module decode
       end
     endcase
 
+    // PC increment: +2 for compressed, +4 for full-width
+    next_pc_override     = pc_override_ff;
+    next_pc_override_val = pc_override_val_ff;
+
     if (fetch_valid_i && id_ready_i && wait_inst_ff && ~wfi_stop_ff) begin
-      next_id_ex.pc_dec  = id_ex_ff.pc_dec + 'd4;
+      if (pc_override_ff) begin
+        // Use the stored override target from a previous decode_pc_update
+        next_id_ex.pc_dec = pc_override_val_ff;
+        next_pc_override  = 1'b0;
+      end else begin
+        next_id_ex.pc_dec = id_ex_ff.pc_dec + (id_ex_ff.is_compressed ? 'd2 : 'd4);
+      end
     end
     else begin
       next_id_ex.pc_dec  = id_ex_ff.pc_dec;
@@ -297,30 +314,29 @@ module decode
 
     if (jump_i) begin
       next_id_ex.pc_dec  = pc_jump_i;
+      next_pc_override   = 1'b0;
     end
 
     // When execute correctly predicted a JAL/taken-branch and suppressed
-    // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment by 4
+    // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment
     // from the jump's PC instead of the actual target.  Use the dedicated
     // update signal to fix up pc_dec without flushing the pipeline.
     //
-    // When execute correctly predicted a JAL/taken-branch and suppressed
-    // fetch_req_o, jump_i stays 0 and pc_dec would otherwise increment by 4
-    // from the jump's PC instead of the actual target.  Use the dedicated
-    // update signal to fix up pc_dec without flushing the pipeline.
-    //
-    // There are three cases:
-    //  a) An instruction is being consumed this cycle (fetch_valid_i && id_ready_i):
-    //     set pc_dec = TARGET directly so the instruction gets the right PC.
-    //  b) wait_inst_ff=0 (after a misprediction redirect): the +4 increment does
-    //     NOT fire when the next instruction arrives, so set TARGET directly.
-    //  c) FIFO empty, wait_inst_ff=1: +4 WILL fire on next arrival → set T-4.
-    //     (When id_ready_i=0 the stall override below discards this anyway.)
+    // Three cases:
+    //  a) An instruction is being consumed this cycle: set pc_dec = TARGET.
+    //  b) wait_inst_ff=0 (after redirect): the increment does NOT fire on
+    //     next arrival, so set TARGET directly.
+    //  c) FIFO empty, wait_inst_ff=1: the increment WILL fire on next
+    //     arrival, but we don't know the next instruction's width.
+    //     Use pc_override to apply TARGET directly on next consumption.
     if (decode_pc_update_i && ~jump_i) begin
       if ((fetch_valid_i && id_ready_i) || ~wait_inst_ff) begin
-        next_id_ex.pc_dec = decode_pc_update_addr_i;
+        next_id_ex.pc_dec    = decode_pc_update_addr_i;
+        next_pc_override     = 1'b0;
       end else begin
-        next_id_ex.pc_dec = decode_pc_update_addr_i - 'd4;
+        // Case (c): defer to override mechanism
+        next_pc_override     = 1'b1;
+        next_pc_override_val = decode_pc_update_addr_i;
       end
     end
 
@@ -351,9 +367,19 @@ module decode
     end
 
     // Propagate branch-predictor tag alongside the decoded instruction.
-    // Only set when there is a valid instruction being consumed.
-    next_id_ex.bp_taken          = fetch_bp_taken_i;
-    next_id_ex.bp_predict_target = fetch_bp_predict_target_i;
+    // Only update when actually consuming a valid instruction from the FIFO.
+    // During pipeline bubbles (FIFO empty), fetch_is_compressed_i defaults to 0,
+    // which would corrupt is_compressed and cause PC tracking to use +4 instead
+    // of +2 after a compressed instruction.
+    if (fetch_valid_i && id_ready_i) begin
+      next_id_ex.bp_taken          = fetch_bp_taken_i;
+      next_id_ex.bp_predict_target = fetch_bp_predict_target_i;
+      next_id_ex.is_compressed     = fetch_is_compressed_i;
+    end else begin
+      next_id_ex.bp_taken          = id_ex_ff.bp_taken;
+      next_id_ex.bp_predict_target = id_ex_ff.bp_predict_target;
+      next_id_ex.is_compressed     = id_ex_ff.is_compressed;
+    end
 
     // We are stalling due to bp on the LSU
     if (~id_ready_i) begin
@@ -363,17 +389,21 @@ module decode
 
   `CLK_PROC(clk, rst) begin
     `RST_TYPE(rst) begin
-      dec_valid_ff    <= 'b0;
-      id_ex_ff        <= `OP_RST_L;
-      id_ex_ff.pc_dec <= pc_reset_i;
-      wait_inst_ff    <= 'b0;
-      wfi_stop_ff     <= 'b0;
+      dec_valid_ff      <= 'b0;
+      id_ex_ff          <= `OP_RST_L;
+      id_ex_ff.pc_dec   <= pc_reset_i;
+      wait_inst_ff      <= 'b0;
+      wfi_stop_ff       <= 'b0;
+      pc_override_ff    <= 1'b0;
+      pc_override_val_ff <= '0;
     end
     else begin
-      dec_valid_ff    <= next_vld_dec;
-      id_ex_ff        <= next_id_ex;
-      wait_inst_ff    <= next_wait_inst;
-      wfi_stop_ff     <= next_wfi_stop;
+      dec_valid_ff      <= next_vld_dec;
+      id_ex_ff          <= next_id_ex;
+      wait_inst_ff      <= next_wait_inst;
+      wfi_stop_ff       <= next_wfi_stop;
+      pc_override_ff    <= next_pc_override;
+      pc_override_val_ff <= next_pc_override_val;
     end
   end
 

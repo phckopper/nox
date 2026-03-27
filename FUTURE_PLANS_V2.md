@@ -450,11 +450,11 @@ The components divide naturally into 5 phases, each independently testable.
 **Estimated complexity: MEDIUM**
 
 Start with v1 architecture, widen to 64 bits.
-- [ ] Widen all registers, immediates, ALU to 64 bits
-- [ ] Add LD/LWU/SD, ADDIW/SUBW/SLL/SRLx/SRAx word variants
-- [ ] Extend multiplier to 65×65 (MULH, MULHSU, MULHU)
-- [ ] Add C extension expander (pre-decode stage)
-- [ ] Carry forward all v1 optimizations (branch predictor, RAS, forwarding)
+- [x] Widen all registers, immediates, ALU to 64 bits
+- [x] Add LD/LWU/SD, ADDIW/SUBW/SLL/SRLx/SRAx word variants
+- [x] Extend multiplier to 65×65 (MULH, MULHSU, MULHU)
+- [x] Add C extension expander (pre-decode stage)
+- [x] Carry forward all v1 optimizations (branch predictor, RAS, forwarding)
 
 **Test:** CoreMark 64-bit, basic Linux boot (M-mode only, no MMU, no FP)
 
@@ -645,7 +645,45 @@ Without caches, the core logic alone would be ~200–300 KGE — comparable to t
 
 **Build status:** Clean compilation, zero Verilator warnings. Simulator binary: `output_verilator_rv64/nox_sim`
 
+**2026-03-27 — Step 6: Add C extension (compressed instructions)** ✅
+- `rtl/rvc_expander.sv`: New module — pure combinational 16→32 bit instruction expander
+  - Covers all RV64C instructions: C.ADDI, C.LI, C.LUI, C.ADDI16SP, C.ADDIW, C.SRLI,
+    C.SRAI, C.ANDI, C.SUB, C.XOR, C.OR, C.AND, C.SUBW, C.ADDW, C.J, C.BEQZ, C.BNEZ,
+    C.SLLI, C.LWSP, C.LDSP, C.MV, C.ADD, C.JALR, C.JR, C.SWSP, C.SDSP, C.LW, C.LD,
+    C.SW, C.SD, C.NOP, C.EBREAK
+- `rtl/fetch.sv`: Complete rewrite for variable-width instruction alignment
+  - 64-bit bus word → parcel-based alignment engine (4 × 16-bit parcels per word)
+  - Handles 16/32-bit instruction boundaries, including 32-bit instructions straddling
+    64-bit bus word boundaries (pending parcel mechanism)
+  - RVC expander integrated inline; `is_compressed` flag propagated through L0 FIFO
+  - L0 FIFO widened to 98 bits: [97:34]=predict_target, [33]=bp_taken, [32]=is_compressed, [31:0]=instr
+- `rtl/decode.sv`: PC tracking updated for compressed instructions
+  - PC increment: `+2` for compressed, `+4` for full-width (based on previous `is_compressed`)
+  - Fixed `is_compressed` corruption during pipeline bubbles — only update bp_taken,
+    bp_predict_target, is_compressed when consuming a valid instruction (`fetch_valid_i && id_ready_i`)
+  - PC override mechanism for branch predictor updates arriving during FIFO-empty states
+- `rtl/execute.sv`: Instruction address misalignment checks relaxed for C extension
+  - Changed from 4-byte alignment (`addr[1]`) to 2-byte alignment (`addr[0]`)
+  - Added `branch_compressed_ff` register for correct fall-through address (+2 vs +4)
+  - JAL/JALR return address: `pc + 2` for compressed, `pc + 4` for full-width
+- `rtl/nox.sv`: Added `is_compressed` signal wiring (fetch→decode)
+- `rtl/inc/riscv_pkg.svh`: Added `is_compressed` field to `s_id_ex_t`
+- `rtl/inc/nox_pkg.svh`: Reduced `FIFO_SLOTS` 4→2 (optimized for alignment engine)
+- `tb/axi_mem.sv`: Fixed AXI `arready` back-pressure (was unconditionally accepting
+  read requests, causing response data overwrites)
+
+**Test status:**
+- RV64C test (13 compressed instruction types + C.SWSP/C.LWSP stack operations): **PASS**
+- Non-compressed test (`.option norvc`): **PASS** (no regression)
+- hello_world (existing RV64 test): **PASS** (no regression)
+
+### Phase 1 Checklist
+- [x] Widen all registers, immediates, ALU to 64 bits
+- [x] Add LD/LWU/SD, ADDIW/SUBW/SLL/SRLx/SRAx word variants
+- [x] Extend multiplier to 65×65 (MULH, MULHSU, MULHU)
+- [x] Add C extension expander (pre-decode stage)
+- [x] Carry forward all v1 optimizations (branch predictor, RAS, forwarding)
+
 ### Next steps
-- [ ] Build RV64 test program and verify basic operation (hello_world or simple test)
-- [ ] Add C extension expander (pre-decode stage)
-- [ ] Run RV64 CoreMark
+- [ ] Run RV64IC CoreMark (`-march=rv64imc_zba_zbb_zicond`)
+- [ ] Begin Phase 2: Privilege + MMU (S-mode, U-mode, Sv39)

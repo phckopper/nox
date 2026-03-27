@@ -256,7 +256,7 @@ module axi_mem
     next_axi_rd  = 'b0;
     byte_sel_rd  = 'h0;
     rd_addr      = axi_mosi.araddr[3+:ADDR_RAM];  // 8-byte aligned
-    axi_miso.arready = 'b1;
+    axi_miso.arready = ~axi_rd_vld_ff | axi_mosi.rready;
     raw_hit = (axi_mosi.arvalid && we_mem && (axi_mosi.araddr == wr_addr_ff));
     next_axi_rid = axi_rid_ff;
 

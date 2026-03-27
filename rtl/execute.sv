@@ -67,6 +67,8 @@ module execute
   // PC of the branch/jump instruction held in branch_ff / jump_ff
   pc_t          branch_pc_ff, next_branch_pc;
   pc_t          jump_pc_ff, next_jump_pc;
+  // Was the branch instruction compressed? (for correct fall-through: +2 vs +4)
+  logic         branch_compressed_ff, next_branch_compressed;
   // BP state carried alongside branch_ff / jump_ff
   logic         bp_taken_for_branch_ff, next_bp_taken_for_branch;
   logic         bp_taken_for_jump_ff, next_bp_taken_for_jump;
@@ -333,7 +335,7 @@ module execute
     if (id_ex_i.is_word_op && ~id_ex_i.jump && ~id_ex_i.is_muldiv)
       next_ex_mem_wb.result = {{32{res[31]}}, res[31:0]};
     else
-      next_ex_mem_wb.result = (id_ex_i.jump) ? alu_t'(id_ex_i.pc_dec+'d4) : res;
+      next_ex_mem_wb.result = (id_ex_i.jump) ? alu_t'(id_ex_i.pc_dec + (id_ex_i.is_compressed ? 'd2 : 'd4)) : res;
     next_ex_mem_wb.rd_addr = id_ex_i.rd_addr;
     next_ex_mem_wb.we_rd   = id_ex_i.we_rd;
     next_ex_mem_wb.lsu     = id_ex_i.lsu;
@@ -436,6 +438,7 @@ module execute
 
     // Track the instruction PC so the predictor update carries the right address.
     next_branch_pc = next_branch.b_act ? id_ex_i.pc_dec : branch_pc_ff;
+    next_branch_compressed = next_branch.b_act ? id_ex_i.is_compressed : branch_compressed_ff;
     next_jump_pc   = next_jump.j_act   ? id_ex_i.pc_dec : jump_pc_ff;
 
     // Track BP state so execute can detect correct predictions and suppress
@@ -473,12 +476,13 @@ module execute
     end
     will_jump_next_clk = next_branch.b_act || next_jump.j_act;
 
+    // With C extension, instructions can be 2-byte aligned; only check bit 0.
     if (will_jump_next_clk && next_jump.j_act) begin
-      instr_addr_misaligned.active = next_jump.j_addr[1];
+      instr_addr_misaligned.active = next_jump.j_addr[0];
       instr_addr_misaligned.mtval  = next_jump.j_addr;
     end
     if (will_jump_next_clk && next_branch.b_act) begin
-      instr_addr_misaligned.active = next_branch.b_addr[1] || next_branch.b_addr[0];
+      instr_addr_misaligned.active = next_branch.b_addr[0];
       instr_addr_misaligned.mtval  = next_branch.b_addr;
     end
   end : jump_lsu_mgmt
@@ -525,7 +529,7 @@ module execute
       end else if (~branch_ff.take_branch && bp_taken_for_branch_ff) begin
         // Not taken but BP predicted taken: flush speculative target fetches
         fetch_req_o  = 1'b1;
-        fetch_addr_o = branch_pc_ff + 4;  // fall-through
+        fetch_addr_o = branch_pc_ff + (branch_compressed_ff ? 'd2 : 'd4);  // fall-through
       end
     end
     if (jump_ff.j_act && ~correct_jump_pred) begin
@@ -570,6 +574,7 @@ module execute
       jump_ff                      <= s_jump_t'('h0);
       branch_pc_ff                 <= pc_t'('0);
       jump_pc_ff                   <= pc_t'('0);
+      branch_compressed_ff         <= 1'b0;
       bp_taken_for_branch_ff       <= 1'b0;
       bp_taken_for_jump_ff         <= 1'b0;
       is_jal_for_jump_ff           <= 1'b0;
@@ -583,6 +588,7 @@ module execute
       jump_ff                      <= next_jump;
       branch_pc_ff                 <= next_branch_pc;
       jump_pc_ff                   <= next_jump_pc;
+      branch_compressed_ff         <= next_branch_compressed;
       bp_taken_for_branch_ff       <= next_bp_taken_for_branch;
       bp_taken_for_jump_ff         <= next_bp_taken_for_jump;
       is_jal_for_jump_ff           <= next_is_jal_for_jump;

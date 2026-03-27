@@ -358,6 +358,7 @@ module csr
     end
 
     trap_o = trap_ff;
+
   end
 
   `CLK_PROC(clk, rst) begin

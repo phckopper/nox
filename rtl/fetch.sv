@@ -1,9 +1,19 @@
 /**
-* File              : fetch.sv
+ * File              : fetch.sv
  * License           : MIT license <Check LICENSE>
  * Author            : Anderson Ignacio da Silva (aignacio) <anderson@aignacio.com>
  * Date              : 16.10.2021
- * Last Modified Date: 03.07.2022
+ * Last Modified Date: 26.03.2026
+ *
+ * RV64IC fetch unit with compressed instruction (C extension) support.
+ *
+ * Architecture:
+ *   Address path → AXI bus → word buffer → alignment engine → L0 FIFO → decode
+ *
+ * The alignment engine extracts 16-bit or 32-bit instructions from 64-bit bus
+ * words, handles 32-bit instructions that straddle 8-byte boundaries, and
+ * expands compressed (16-bit) instructions to their 32-bit canonical form
+ * via the rvc_expander module.
  */
 module fetch
   import amba_axi_pkg::*;
@@ -38,44 +48,22 @@ module fetch
   input   ready_t       fetch_ready_i,
   output  instr_raw_t   fetch_instr_o,
   output  logic         fetch_bp_taken_o,          // BP predicted taken
-  output  pc_t          fetch_bp_predict_target_o, // P2: BP predicted target
+  output  pc_t          fetch_bp_predict_target_o, // BP predicted target
+  output  logic         fetch_is_compressed_o,     // Instruction was compressed (16-bit)
   // Trap - Instruction access fault
   output  s_trap_info_t trap_info_o
 );
   typedef logic [$clog2(L0_BUFFER_SIZE):0] buffer_t;
 
-  logic         get_next_instr;
-  logic         write_instr;
-  buffer_t      buffer_space;
-  instr_raw_t   instr_buffer;  // driven by assign from l0_data_out[31:0]
-  logic         full_fifo;
-  logic         data_valid;
-  logic         data_ready;
-  logic         jump;
-  logic         clear_fifo;
-  logic         valid_addr;
-  logic         read_ot_fifo;
-  logic         ot_empty;
+  // ================================================================
+  // Signals
+  // ================================================================
 
-  cb_addr_t     pc_addr_ff, next_pc_addr;
-  cb_addr_t     pc_buff_ff, next_pc_buff;
+  // --- Address path ---
+  cb_addr_t     fetch_addr_ff, next_fetch_addr;
+  cb_addr_t     fetch_addr_buf_ff, next_fetch_addr_buf;  // saved addr for F_CLR
   logic         req_ff, next_req;
-  logic         valid_txn_i;
-  logic         valid_txn_o;  // driven by assign from ot_data_out[0]
   logic         addr_ready;
-  logic         instr_access_fault;
-
-  logic         predict_taken;
-  pc_t          predict_target;
-
-  // OT FIFO: [66:3]=predict_target, [2]=pc_bit2, [1]=bp_taken, [0]=valid_txn  (67 bits)
-  logic [66:0]  ot_data_out;
-  logic         bp_taken_txn;   // bp_taken  propagated from OT FIFO to L0 FIFO
-  pc_t          bp_target_txn;  // predict_target propagated from OT FIFO to L0 FIFO
-  logic         pc_bit2_txn;    // PC[2] for 32-bit lane selection from 64-bit bus
-
-  // L0 FIFO: [96:33]=predict_target, [32]=bp_taken, [31:0]=instruction  (97 bits)
-  logic [96:0]  l0_data_out;
 
   typedef enum logic [1:0] {
     F_STP,
@@ -83,10 +71,79 @@ module fetch
     F_CLR
   } fetch_st_t;
 
-  fetch_st_t st_ff, next_st;
-  buffer_t   ot_cnt_ff, next_ot;
+  fetch_st_t    st_ff, next_st;
 
-  always_comb begin : addr_chn_req
+  // Outstanding transaction tracking
+  logic [2:0]   ot_cnt_ff, next_ot_cnt;       // outstanding bus transactions
+  logic [2:0]   discard_cnt_ff, next_discard;  // responses to discard
+
+  // --- Word buffer (holds current 64-bit bus word) ---
+  logic [63:0]  word_buf_ff;
+  logic         word_valid_ff, next_word_valid;
+  logic [1:0]   parcel_pos_ff, next_parcel_pos;  // current parcel (0-3)
+  logic [63:0]  next_word_buf;
+  logic         load_word;  // accept bus data into word buffer
+
+  // --- Pending half (first 16 bits of straddling 32-bit instruction) ---
+  logic [15:0]  pending_half_ff;
+  logic         pending_valid_ff, next_pending_valid;
+  logic [15:0]  next_pending_half;
+
+  // --- Instruction PC ---
+  pc_t          instr_pc_ff, next_instr_pc;
+
+  // --- Alignment engine outputs ---
+  logic         align_produce;     // alignment engine produces an instruction this cycle
+  logic [31:0]  align_instr;       // expanded 32-bit instruction
+  logic         align_compressed;  // was a compressed instruction
+  logic         align_redirect;    // BP redirect from alignment engine
+  pc_t          align_redirect_addr;
+
+  // --- RVC expander ---
+  logic [15:0]  rvc_instr_in;
+  logic [31:0]  rvc_instr_out;
+  logic         rvc_illegal;
+
+  // --- Branch predictor ---
+  logic         predict_taken;
+  pc_t          predict_target;
+
+  // --- Bus interface signals ---
+  logic         data_valid;
+  logic         data_ready;
+  logic         valid_addr;
+
+  // --- L0 FIFO ---
+  logic         write_l0;
+  logic         get_next_instr;
+  logic         full_l0;
+  buffer_t      l0_space;
+  // L0 data: [97:34]=predict_target, [33]=bp_taken, [32]=is_compressed, [31:0]=instruction
+  logic [97:0]  l0_data_in;
+  logic [97:0]  l0_data_out;
+
+  // --- Redirect logic ---
+  logic         redirect;        // any redirect (jump or BP)
+  pc_t          redirect_addr;
+  logic         jump;
+  logic         clear_l0;        // clear L0 FIFO
+  logic         clear_align;     // clear alignment state
+  logic         instr_access_fault;
+
+  // ================================================================
+  // Redirect priority: execute jump > BP redirect
+  // ================================================================
+  assign jump         = fetch_req_i;
+  assign redirect     = jump || align_redirect;
+  assign redirect_addr = jump ? fetch_addr_i : align_redirect_addr;
+  assign clear_l0     = jump || (~fetch_start_i);
+  assign clear_align  = redirect || (~fetch_start_i);
+
+  // ================================================================
+  // Address path — issues 8-byte-aligned bus requests
+  // ================================================================
+  always_comb begin : addr_path
+    // Write channel — unused for fetch
     instr_cb_mosi_o.wr_addr       = cb_addr_t'('0);
     instr_cb_mosi_o.wr_size       = cb_size_t'('0);
     instr_cb_mosi_o.wr_addr_valid = 1'b0;
@@ -95,69 +152,57 @@ module fetch
     instr_cb_mosi_o.wr_data_valid = 1'b0;
     instr_cb_mosi_o.wr_resp_ready = 1'b0;
 
-    data_valid   = instr_cb_miso_i.rd_valid;
-    addr_ready   = instr_cb_miso_i.rd_addr_ready;
-    clear_fifo   = (fetch_req_i || (~fetch_start_i));
-    valid_addr   = 1'b0;
-    next_pc_addr = pc_addr_ff;
-    next_pc_buff = pc_buff_ff;
-    next_st      = st_ff;
-    jump         = fetch_req_i;
-    valid_txn_i  = 1'b0;
+    data_valid       = instr_cb_miso_i.rd_valid;
+    addr_ready       = instr_cb_miso_i.rd_addr_ready;
+    valid_addr       = 1'b0;
+    next_fetch_addr  = fetch_addr_ff;
+    next_fetch_addr_buf = fetch_addr_buf_ff;
+    next_st          = st_ff;
 
-    next_ot = ot_cnt_ff + buffer_t'(req_ff && addr_ready) - buffer_t'(data_valid && data_ready);
+    // Outstanding counter: +1 on request accepted, -1 on response received
+    next_ot_cnt = ot_cnt_ff
+                  + {2'b0, req_ff && addr_ready}
+                  - {2'b0, data_valid && data_ready};
 
     case (st_ff)
       F_STP: begin
         next_st = fetch_start_i ? F_REQ : F_STP;
-
         if (req_ff && ~addr_ready) begin
-          valid_addr  = 1'b1; // Keep driving high to complete txn
-          valid_txn_i = 1'b0;
+          valid_addr = 1'b1;  // keep driving to complete pending txn
         end
       end
+
       F_REQ: begin
         if (req_ff && ~addr_ready) begin
-          valid_addr  = 1'b1; // Keep driving high to complete txn
-          valid_txn_i = 1'b1;
+          valid_addr = 1'b1;  // keep driving until accepted
         end
 
         if (req_ff && addr_ready) begin
-          valid_txn_i = 1'b1;
-          // If the predictor says this fetch address is a taken branch,
-          // redirect to the predicted target instead of falling through.
-          // The confirmed-jump redirect (fetch_req_i) takes priority via
-          // the jump block below.
-          if (predict_taken && ~jump) begin
-            next_pc_addr = predict_target;
-          end else begin
-            next_pc_addr = pc_addr_ff + 'd4;
-          end
+          // Request accepted — advance to next 8-byte word
+          next_fetch_addr = fetch_addr_ff + 'd8;
         end
 
+        // Issue next request if:
+        // - Previous request completed or no pending request
+        // - Outstanding count within limit
+        // - Word buffer has space or alignment engine is draining
         if ((req_ff && addr_ready) || ~req_ff) begin
-          // Next txn — also gate if FIFO is about to fill while decode stalls
-          if (next_ot < (buffer_t'(L0_BUFFER_SIZE))) begin
-            valid_addr  = ~full_fifo && ~(write_instr && (buffer_space == buffer_t'(L0_BUFFER_SIZE-1)) && ~get_next_instr);
+          if (next_ot_cnt < 3'd2) begin  // limit outstanding to 2
+            valid_addr = ~full_l0;
           end
         end
 
-        if (jump) begin
-          next_pc_addr = fetch_addr_i;
-          next_pc_buff = pc_addr_ff;
-          valid_txn_i  = 1'b0;
+        // --- Redirect handling ---
+        if (redirect) begin
+          next_fetch_addr     = {redirect_addr[63:3], 3'b000};  // 8-byte aligned
+          next_fetch_addr_buf = fetch_addr_ff;
 
           if (req_ff && ~addr_ready) begin
-            // P5: Only enter F_CLR when an address beat is still pending —
-            // must keep driving the address until AXI acknowledges it.
-            next_st    = F_CLR;
+            // Address beat still pending — enter F_CLR to drain it
+            next_st = F_CLR;
           end else begin
-            // P5: Address channel is idle or completes this cycle.
-            // Any in-flight data beats drain naturally: clear_fifo flushed
-            // the OT FIFO so returning beats have no OT entry and are
-            // discarded without stalling.  Issue the jump target now,
-            // saving one redirect bubble vs. waiting in F_CLR.
-            valid_addr = 1'b1;
+            // Address channel idle or completed this cycle
+            valid_addr = 1'b1;  // issue redirect target immediately
           end
         end
 
@@ -165,55 +210,205 @@ module fetch
           next_st = F_STP;
         end
       end
+
       F_CLR: begin
-        // P5: Reached only when the address channel was still pending at
-        // jump time.  Keep driving the pre-jump address (pc_buff_ff, via
-        // the rd_addr mux) until AXI accepts it (valid_txn_i=0 marks it
-        // as discard).  Once accepted, immediately issue the jump target —
-        // no need to wait for in-flight data since the OT FIFO was cleared
-        // and returning beats are silently discarded.
-        valid_txn_i = 1'b0;
+        // Keep driving old address until AXI accepts it
         if (req_ff && ~addr_ready) begin
-          valid_addr  = 1'b1;  // keep driving old address until accepted
+          valid_addr = 1'b1;
         end else begin
           next_st    = F_REQ;
-          valid_addr = 1'b1;   // immediately issue jump target
+          valid_addr = 1'b1;  // immediately issue redirect target
         end
       end
+
       default: valid_addr = 1'b0;
     endcase
 
     next_req = valid_addr;
     instr_cb_mosi_o.rd_addr_valid = req_ff;
-    instr_cb_mosi_o.rd_addr       = req_ff ? ((st_ff == F_CLR) ? pc_buff_ff : pc_addr_ff) : '0;
+    instr_cb_mosi_o.rd_addr       = req_ff ? ((st_ff == F_CLR) ? fetch_addr_buf_ff : fetch_addr_ff) : '0;
     instr_cb_mosi_o.rd_size       = req_ff ? cb_size_t'(CB_DWORD) : cb_size_t'('0);
-  end : addr_chn_req
+  end : addr_path
 
-  // Decode OT FIFO output: bit[0]=valid_txn, bit[1]=bp_taken, bit[2]=pc_bit2, [66:3]=predict_target
-  assign valid_txn_o   = ot_data_out[0];
-  assign bp_taken_txn  = ot_data_out[1];
-  assign pc_bit2_txn   = ot_data_out[2];
-  assign bp_target_txn = ot_data_out[66:3];
-  // Decode L0 FIFO output: bits[31:0]=instruction, bit[32]=bp_taken, [96:33]=predict_target
-  assign instr_buffer              = instr_raw_t'(l0_data_out[31:0]);
-  assign fetch_bp_taken_o          = l0_data_out[32];
-  assign fetch_bp_predict_target_o = l0_data_out[96:33];
+  // ================================================================
+  // Discard counter — tracks stale in-flight responses after redirect
+  // ================================================================
+  always_comb begin : discard_logic
+    next_discard = discard_cnt_ff;
 
-  always_comb begin : rd_chn
-    write_instr = 'b0;
-    data_ready = (st_ff == F_REQ) ? (~full_fifo || fetch_req_i) : 'b1;
-    instr_cb_mosi_o.rd_ready = data_ready;
-    read_ot_fifo = ot_empty ? 1'b0 : (data_valid && data_ready);
-    // Only write in the FIFO if
-    // 1 - When there's no jump req
-    // 2 - When there's vld data phase (opposite means discarding)
-    // 3 - There valid data in the bus
-    // 4 - We don't have a full fifo
-    if (~fetch_req_i && ~ot_empty && valid_txn_o && data_valid && ~full_fifo) begin
-      write_instr = 'b1;
+    if (redirect) begin
+      // All currently outstanding + any pending address beat become stale
+      next_discard = ot_cnt_ff + {2'b0, req_ff && ~addr_ready};
+      // Subtract responses arriving this very cycle (they're from old path too)
+      // Actually, responses this cycle were already in flight before redirect
+      // They should be discarded. The counter already includes them in ot_cnt.
+    end else if (data_valid && data_ready && discard_cnt_ff > 0) begin
+      next_discard = discard_cnt_ff - 3'd1;
     end
-  end : rd_chn
+  end : discard_logic
 
+  // ================================================================
+  // Data path — bus response → word buffer
+  // ================================================================
+  always_comb begin : data_path
+    // Accept bus data when:
+    // - We need to discard (always accept to complete AXI handshake), OR
+    // - Word buffer is empty and we can process
+    // Use `jump` (not `redirect`) to avoid combinational loop:
+    // load_word → next_word_valid → align_redirect → redirect → load_word
+    // BP redirects are handled by clear_align on the same cycle.
+    data_ready = (st_ff == F_REQ || st_ff == F_CLR) ?
+                 ((discard_cnt_ff > 0) || ~word_valid_ff || jump) :
+                 1'b1;  // F_STP: always accept (drain)
+    instr_cb_mosi_o.rd_ready = data_ready;
+
+    // Load word buffer when: data valid, data ready, not discarding, word buffer empty
+    load_word = data_valid && data_ready && (discard_cnt_ff == 0) && ~word_valid_ff && ~jump;
+  end : data_path
+
+  // ================================================================
+  // RVC Expander instance
+  // ================================================================
+  rvc_expander u_rvc_expander (
+    .instr_i  (rvc_instr_in),
+    .instr_o  (rvc_instr_out),
+    .illegal_o(rvc_illegal)
+  );
+
+  // ================================================================
+  // Alignment engine — extracts instructions from word buffer
+  // ================================================================
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [15:0] cur_parcel;
+  logic [31:0] cur_32bit;
+
+  always_comb begin : alignment_engine
+    align_produce    = 1'b0;
+    align_instr      = 32'h0;
+    align_compressed = 1'b0;
+    align_redirect   = 1'b0;
+    align_redirect_addr = '0;
+
+    next_word_valid  = word_valid_ff;
+    next_word_buf    = word_buf_ff;
+    next_parcel_pos  = parcel_pos_ff;
+    next_pending_valid = pending_valid_ff;
+    next_pending_half  = pending_half_ff;
+    next_instr_pc    = instr_pc_ff;
+    rvc_instr_in     = '0;
+
+    // Load word buffer from bus
+    if (load_word) begin
+      next_word_buf   = instr_cb_miso_i.rd_data;
+      next_word_valid = 1'b1;
+    end
+
+    // Precompute current parcel and 32-bit slice from word buffer
+    cur_parcel = next_word_buf[next_parcel_pos * 16 +: 16];
+    cur_32bit  = (next_parcel_pos <= 2'd2) ? next_word_buf[next_parcel_pos * 16 +: 32] : 32'h0;
+
+    // Extract instruction when word buffer valid and L0 FIFO has space
+    // Use ~jump (not ~redirect) to avoid combinational loop with align_redirect.
+    // BP redirect is self-generated here; clear_align handles cleanup.
+    if (next_word_valid && ~full_l0 && ~jump && fetch_start_i) begin
+
+      if (next_pending_valid) begin
+        // === Completing a straddling 32-bit instruction ===
+        // The second half is at parcel 0 of the new word
+        align_instr   = {cur_parcel, next_pending_half};
+        align_produce = 1'b1;
+        align_compressed = 1'b0;
+        next_pending_valid = 1'b0;
+        next_parcel_pos = next_parcel_pos + 2'd1;
+        next_instr_pc   = instr_pc_ff + 'd4;  // full 32-bit instruction
+      end else if (cur_parcel[1:0] != 2'b11) begin
+        // === Compressed instruction (16-bit) ===
+        rvc_instr_in     = cur_parcel;
+        align_instr      = rvc_instr_out;
+        align_produce    = 1'b1;
+        align_compressed = 1'b1;
+        next_parcel_pos  = next_parcel_pos + 2'd1;
+        next_instr_pc    = instr_pc_ff + 'd2;
+      end else if (next_parcel_pos <= 2'd2) begin
+        // === Full 32-bit instruction, both halves in same word ===
+        align_instr      = cur_32bit;
+        align_produce    = 1'b1;
+        align_compressed = 1'b0;
+        next_parcel_pos  = next_parcel_pos + 2'd2;
+        next_instr_pc    = instr_pc_ff + 'd4;
+      end else begin
+        // === Straddling: 32-bit instruction at parcel 3, needs next word ===
+        next_pending_half  = cur_parcel;
+        next_pending_valid = 1'b1;
+        // Mark word consumed — need next word
+        next_word_valid = 1'b0;
+        // Don't advance instr_pc — instruction not complete yet
+        // parcel_pos will be 0 when next word loads
+        next_parcel_pos = 2'd0;
+      end
+
+      // Check if word buffer is fully consumed
+      if (next_parcel_pos == 2'd0 && align_produce) begin
+        // Wrapped around — all 4 parcels consumed (or 2 consumed from pos 2)
+        next_word_valid = 1'b0;
+      end
+      // Also check for parcel_pos overflow: if we advanced past parcel 3
+      // This happens when: pos was 3 and compressed (+1 → wraps to 0)
+      //                 or: pos was 2 and full (+2 → wraps to 0)
+
+      // BP redirect: if we produced an instruction and BP says taken
+      if (align_produce && predict_taken && ~jump) begin
+        align_redirect      = 1'b1;
+        align_redirect_addr = predict_target;
+        // Discard remaining parcels in this word
+        next_word_valid     = 1'b0;
+        next_pending_valid  = 1'b0;
+        // Update instruction PC to predicted target
+        next_instr_pc       = predict_target;
+        next_parcel_pos     = predict_target[2:1];
+      end
+    end
+
+    // Clear alignment state on redirect or stop
+    if (clear_align) begin
+      next_word_valid    = 1'b0;
+      next_pending_valid = 1'b0;
+      next_instr_pc      = redirect ? redirect_addr : instr_pc_ff;
+      next_parcel_pos    = redirect ? redirect_addr[2:1] : 2'd0;
+    end
+  end : alignment_engine
+  /* verilator lint_on UNUSEDSIGNAL */
+
+  // ================================================================
+  // L0 FIFO write
+  // ================================================================
+  assign write_l0 = align_produce && ~full_l0 && ~jump;
+  assign l0_data_in = {predict_target, predict_taken && ~jump, align_compressed, align_instr};
+
+  // ================================================================
+  // L0 FIFO read — instruction output to decode
+  // ================================================================
+  always_comb begin : fetch_output
+    fetch_valid_o  = 'b0;
+    fetch_instr_o  = 'd0;
+    get_next_instr = 'b0;
+    fetch_bp_taken_o          = 1'b0;
+    fetch_bp_predict_target_o = '0;
+    fetch_is_compressed_o     = 1'b0;
+
+    if (fetch_start_i && ~fetch_req_i && (l0_space != 'd0)) begin
+      fetch_valid_o  = 'b1;
+      fetch_instr_o  = instr_raw_t'(l0_data_out[31:0]);
+      fetch_is_compressed_o     = l0_data_out[32];
+      fetch_bp_taken_o          = l0_data_out[33];
+      fetch_bp_predict_target_o = l0_data_out[97:34];
+      get_next_instr = fetch_ready_i;
+    end
+  end : fetch_output
+
+  // ================================================================
+  // Trap — instruction access fault
+  // ================================================================
   always_comb begin : trap_control
     trap_info_o = s_trap_info_t'('0);
     instr_access_fault = instr_cb_miso_i.rd_valid &&
@@ -221,107 +416,86 @@ module fetch
 
     if (instr_access_fault) begin
       trap_info_o.active  = 'b1;
-      trap_info_o.pc_addr = pc_addr_ff;
-      trap_info_o.mtval   = pc_addr_ff;
+      trap_info_o.pc_addr = instr_pc_ff;
+      trap_info_o.mtval   = instr_pc_ff;
     end
   end : trap_control
 
+  // ================================================================
+  // Debug: trace alignment engine (TEMPORARY)
+  // ================================================================
+
+  // ================================================================
+  // Registered state
+  // ================================================================
   `CLK_PROC(clk, rst) begin
     `RST_TYPE(rst) begin
-      pc_addr_ff   <= cb_addr_t'(fetch_start_addr_i);
-      pc_buff_ff   <= cb_addr_t'(fetch_start_addr_i);
-      st_ff        <= F_STP;
-      req_ff       <= 1'b0;
-      ot_cnt_ff    <= buffer_t'('0);
+      fetch_addr_ff     <= {fetch_start_addr_i[63:3], 3'b000};
+      fetch_addr_buf_ff <= {fetch_start_addr_i[63:3], 3'b000};
+      instr_pc_ff       <= fetch_start_addr_i;
+      st_ff             <= F_STP;
+      req_ff            <= 1'b0;
+      ot_cnt_ff         <= 3'd0;
+      discard_cnt_ff    <= 3'd0;
+      word_buf_ff       <= 64'd0;
+      word_valid_ff     <= 1'b0;
+      parcel_pos_ff     <= fetch_start_addr_i[2:1];
+      pending_half_ff   <= 16'd0;
+      pending_valid_ff  <= 1'b0;
     end
     else begin
-      pc_addr_ff   <= next_pc_addr;
-      pc_buff_ff   <= next_pc_buff;
-      st_ff        <= next_st;
-      req_ff       <= next_req;
-      ot_cnt_ff    <= next_ot;
+      fetch_addr_ff     <= next_fetch_addr;
+      fetch_addr_buf_ff <= next_fetch_addr_buf;
+      instr_pc_ff       <= next_instr_pc;
+      st_ff             <= next_st;
+      req_ff            <= next_req;
+      ot_cnt_ff         <= next_ot_cnt;
+      discard_cnt_ff    <= next_discard;
+      word_buf_ff       <= load_word ? instr_cb_miso_i.rd_data : word_buf_ff;
+      word_valid_ff     <= next_word_valid;
+      parcel_pos_ff     <= next_parcel_pos;
+      pending_half_ff   <= next_pending_half;
+      pending_valid_ff  <= next_pending_valid;
     end
   end
 
-  always_comb begin : fetch_proc_if
-    fetch_valid_o = 'b0;
-    fetch_instr_o = 'd0;
-    get_next_instr = 'b0;
-
-    // We assert valid instr if:
-    // 1 - There's no req to fetch a new addr
-    // 2 - There's data inside the FIFO
-    if (fetch_start_i && ~fetch_req_i && (buffer_space != 'd0)) begin
-      // We request to read the FIFO if:
-      // 3 - The next stage is ready to receive
-      fetch_valid_o  = 'b1;
-      fetch_instr_o  = instr_buffer;
-      get_next_instr = fetch_ready_i;
-    end
-  end : fetch_proc_if
-
-  // OT tracking FIFO: WIDTH=67, [66:3]=predict_target, [2]=pc_bit2, [1]=bp_taken, [0]=valid_txn.
-  // predict_taken and predict_target are captured at address-phase so they travel
-  // with the transaction and are forwarded into the L0 FIFO on the data phase.
+  // ================================================================
+  // L0 Instruction FIFO
+  // Width=98: [97:34]=predict_target, [33]=bp_taken, [32]=is_compressed, [31:0]=instruction
+  // ================================================================
   fifo_nox #(
     .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (67)
-  ) u_fifo_ot_rd (
-    .clk      (clk),
-    .rst      (rst),
-    .clear_i  (clear_fifo),
-    .write_i  ((req_ff && addr_ready)),
-    .read_i   (read_ot_fifo),
-    .data_i   ({predict_target, pc_addr_ff[2], predict_taken && ~jump, valid_txn_i}),
-    .data_o   (ot_data_out),
-    .error_o  (),
-    .full_o   (),
-    .empty_o  (ot_empty),
-    .ocup_o   ()
-  );
-
-  // Select correct 32-bit instruction lane from 64-bit read data based on PC[2]
-  // pc_bit2_txn is captured at address-phase and travels through the OT FIFO
-  // so it matches the returning data beat, not the current fetch address.
-  logic [31:0] instr_from_bus;
-  assign instr_from_bus = pc_bit2_txn ? instr_cb_miso_i.rd_data[63:32]
-                                      : instr_cb_miso_i.rd_data[31:0];
-
-  // Instruction FIFO: WIDTH=97, [96:33]=predict_target, [32]=bp_taken, [31:0]=instruction.
-  fifo_nox #(
-    .SLOTS    (L0_BUFFER_SIZE),
-    .WIDTH    (97)
+    .WIDTH    (98)
   ) u_fifo_l0 (
     .clk      (clk),
     .rst      (rst),
-    .clear_i  (clear_fifo),
-    .write_i  (write_instr),
+    .clear_i  (clear_l0),
+    .write_i  (write_l0),
     .read_i   (get_next_instr),
-    .data_i   ({bp_target_txn, bp_taken_txn, instr_from_bus}),
+    .data_i   (l0_data_in),
     .data_o   (l0_data_out),
     .error_o  (),
-    .full_o   (full_fifo),
+    .full_o   (full_l0),
     .empty_o  (),
-    .ocup_o   (buffer_space)
+    .ocup_o   (l0_space)
   );
 
+  // ================================================================
+  // Branch predictor — queried per instruction from alignment engine
+  // ================================================================
   branch_predictor u_branch_predictor (
     .clk               (clk),
     .rst               (rst),
-    // Query: use current fetch address so the prediction is ready
-    // combinationally when computing next_pc_addr.
-    .fetch_pc_i        (pc_addr_ff),
+    .fetch_pc_i        (instr_pc_ff),
     .predict_taken_o   (predict_taken),
     .predict_target_o  (predict_target),
-    // Update from execute on every resolved branch/jump
     .update_i          (bp_update_i),
     .update_pc_i       (bp_update_pc_i),
     .update_taken_i    (bp_update_taken_i),
     .update_target_i   (bp_update_target_i),
-    // P2: RAS push/pop control from execute
-    .is_call_i          (bp_is_call_i),
-    .call_ret_addr_i    (bp_call_ret_addr_i),
-    .is_return_i        (bp_is_return_i)
+    .is_call_i         (bp_is_call_i),
+    .call_ret_addr_i   (bp_call_ret_addr_i),
+    .is_return_i       (bp_is_return_i)
   );
 
 `ifdef COCOTB_SIM

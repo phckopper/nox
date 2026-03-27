@@ -248,6 +248,9 @@
     // RV64: word-width operation flag (*W instructions: ADDIW, SLLW, DIVW, etc.)
     // When set, execute truncates result to 32 bits and sign-extends to 64.
     logic         is_word_op;
+    // RV64C: instruction was a compressed (16-bit) instruction.
+    // Used for link address calculation: JAL/JALR → pc+2 instead of pc+4.
+    logic         is_compressed;
   } s_id_ex_t;
 
   typedef struct packed {
