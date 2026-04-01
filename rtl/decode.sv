@@ -237,6 +237,10 @@ module decode
         next_id_ex.f3     = RV_F3_ADD_SUB;
         next_id_ex.rs1_op = ZERO;
         next_id_ex.rs2_op = ZERO;
+        // FENCE.I (funct3=001): flush pipeline + I-TLB
+        if (instr_dec.f3 == 3'b001) begin
+          next_id_ex.fence_i = 1'b1;
+        end
       end
       RV_SYSTEM: begin
         next_id_ex.f3         = RV_F3_ADD_SUB;
@@ -266,6 +270,10 @@ module decode
             ((instr_dec.rs2 == 'h2) && (instr_dec.f7 == 'h18)): begin
               next_id_ex.mret = 'b1;
             end
+            ((instr_dec.rs2 == 'h2) && (instr_dec.f7 == 'h8)): begin
+              // SRET: funct7=0001000, rs2=00010
+              next_id_ex.sret = 'b1;
+            end
             ((instr_dec.rs2 == 'h5) && (instr_dec.f7 == 'h8)): begin
               next_id_ex.wfi = 'b1;
             end
@@ -277,6 +285,14 @@ module decode
               end
             end
           endcase
+        end
+        else if ((instr_dec.f3 == RV_F3_ADD_SUB) &&
+                 (instr_dec.rd == 'h0) &&
+                 (instr_dec.f7 == 'h9)) begin
+          // SFENCE.VMA: funct7=0001001, funct3=000, rd=0; rs1=vaddr, rs2=asid
+          next_id_ex.sfence_vma = 'b1;
+          next_id_ex.rs1_op     = REG_RF;  // carry rs1/rs2 for TLB invalidation
+          next_id_ex.rs2_op     = REG_RF;
         end
         else begin
           if (fetch_valid_i && id_ready_i) begin

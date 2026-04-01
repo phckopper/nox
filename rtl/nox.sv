@@ -81,6 +81,7 @@ module nox
   rdata_t           wb_fwd_load;
   logic             lock_wb;
   pc_t              lsu_pc;
+  logic [1:0]       priv_mode;
 
 `ifdef TARGET_FPGA
   reset_sync#(
@@ -243,7 +244,8 @@ module nox
     .bp_is_return_o        (bp_is_return),
     // From diff stgs
     .fetch_trap_i          (fetch_trap),
-    .lsu_trap_i            (lsu_trap)
+    .lsu_trap_i            (lsu_trap),
+    .priv_mode_o           (priv_mode)
   );
 
   lsu #(

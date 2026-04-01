@@ -50,7 +50,9 @@ module execute
   output  logic             bp_is_return_o,
   // Trap signals
   input   s_trap_info_t     fetch_trap_i,
-  input   s_trap_lsu_info_t lsu_trap_i
+  input   s_trap_lsu_info_t lsu_trap_i,
+  // Current privilege mode (M=11, S=01, U=00)
+  output  logic [1:0]       priv_mode_o
 );
   typedef enum logic {
     NO_FWD,
@@ -89,6 +91,7 @@ module execute
   s_trap_info_t trap_out;
   logic         will_jump_next_clk;
   logic         eval_trap;
+  logic [1:0]   priv_mode_csr;
   logic         load_use_hazard;
   logic         mispred_not_taken;
   logic         wrong_path;
@@ -542,6 +545,14 @@ module execute
       fetch_addr_o = trap_out.pc_addr;
     end
 
+    // SFENCE.VMA and FENCE.I: flush the fetch pipeline to pc+instr_size.
+    // The MMU will handle TLB invalidation via the sfence_vma signal routed
+    // from id_ex_i.sfence_vma (visible to nox.sv).
+    if (id_ex_i.sfence_vma || id_ex_i.fence_i) begin
+      fetch_req_o  = 'b1;
+      fetch_addr_o = id_ex_i.pc_dec + (id_ex_i.is_compressed ? 'd2 : 'd4);
+    end
+
     // When a JAL/taken-branch is correctly predicted, fetch_req_o stays 0
     // (no flush needed) but decode never sees jump_i=1, so pc_dec is not
     // updated to the actual target.  Fire a dedicated PC-update pulse so
@@ -800,8 +811,12 @@ module execute
     .ecall_i            (id_ex_i.ecall),
     .ebreak_i           (id_ex_i.ebreak),
     .mret_i             (id_ex_i.mret),
+    .sret_i             (id_ex_i.sret),
     .wfi_i              (id_ex_i.wfi),
     .lsu_trap_i         (lsu_trap_i),
-    .trap_o             (trap_out)
+    .trap_o             (trap_out),
+    .priv_mode_o        (priv_mode_csr)
   );
+
+  assign priv_mode_o = priv_mode_csr;
 endmodule

@@ -3,11 +3,35 @@
   `define PC_WIDTH      64
   `define XLEN          64
 
+  // Privilege levels
+  `define RV_PRIV_U  2'b00
+  `define RV_PRIV_S  2'b01
+  `define RV_PRIV_M  2'b11
+
+  // mstatus field bit positions
+  `define RV_MST_UIE    0
+  `define RV_MST_SIE    1
   `define RV_MST_MIE    3
+  `define RV_MST_UPIE   4
+  `define RV_MST_SPIE   5
   `define RV_MST_MPIE   7
-  `define RV_MIE_MEIP   11
-  `define RV_MIE_MTIP   7
+  `define RV_MST_SPP    8
+  `define RV_MST_MPP_LO 11
+  `define RV_MST_MPP_HI 12
+  `define RV_MST_MPRV   17
+  `define RV_MST_SUM    18
+  `define RV_MST_MXR    19
+  `define RV_MST_TVM    20
+  `define RV_MST_TW     21
+  `define RV_MST_TSR    22
+
+  // MIE/MIP bit positions
+  `define RV_MIE_SSIP   1
   `define RV_MIE_MSIP   3
+  `define RV_MIE_STIP   5
+  `define RV_MIE_MTIP   7
+  `define RV_MIE_SEIP   9
+  `define RV_MIE_MEIP   11
 
   typedef logic [31:0]              instr_raw_t;  // Instructions are always 32-bit
   typedef logic [`PC_WIDTH-1:0]     pc_t;
@@ -24,10 +48,25 @@
   typedef logic [11:0]              csr_addr_t;
 
   typedef enum logic [11:0] {
+    // S-mode CSRs
+    RV_CSR_SSTATUS    = 12'h100,  // Shadow of mstatus (S-visible bits)
+    RV_CSR_SIE        = 12'h104,  // Shadow of mie (S-level bits)
+    RV_CSR_STVEC      = 12'h105,
+    RV_CSR_SCOUNTEREN = 12'h106,
+    RV_CSR_SSCRATCH   = 12'h140,
+    RV_CSR_SEPC       = 12'h141,
+    RV_CSR_SCAUSE     = 12'h142,
+    RV_CSR_STVAL      = 12'h143,
+    RV_CSR_SIP        = 12'h144,  // Shadow of mip (S-level bits)
+    RV_CSR_SATP       = 12'h180,
+    // M-mode CSRs
     RV_CSR_MSTATUS    = 12'h300,
     RV_CSR_MISA       = 12'h301,
+    RV_CSR_MEDELEG    = 12'h302,
+    RV_CSR_MIDELEG    = 12'h303,
     RV_CSR_MIE        = 12'h304,
     RV_CSR_MTVEC      = 12'h305,
+    RV_CSR_MCOUNTEREN = 12'h306,
     RV_CSR_MSCRATCH   = 12'h340,
     RV_CSR_MEPC       = 12'h341,
     RV_CSR_MCAUSE     = 12'h342,
@@ -190,9 +229,10 @@
   } s_instr_t;
 
   typedef struct packed {
-    logic ext_irq;
-    logic sw_irq;
-    logic timer_irq;
+    logic ext_irq;    // MEIP — M-mode external (PLIC M-context)
+    logic sw_irq;     // MSIP — M-mode software (CLINT)
+    logic timer_irq;  // MTIP — M-mode timer (CLINT mtime >= mtimecmp)
+    logic s_ext_irq;  // SEIP — S-mode external (PLIC S-context)
   } s_irq_t;
 
   typedef struct packed {
@@ -230,6 +270,9 @@
     logic         ecall;
     logic         ebreak;
     logic         mret;
+    logic         sret;        // Phase 2A: S-mode return
+    logic         sfence_vma;  // Phase 2A: supervisor fence
+    logic         fence_i;     // Phase 2A: instruction fence
     logic         wfi;
     s_trap_info_t trap;
     // Branch predictor: set when the BP predicted this instruction as a

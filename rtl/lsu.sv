@@ -188,12 +188,12 @@ module lsu
     if (ap_txn) begin
         bp_addr = ap_rd_txn ? ~data_cb_miso_i.rd_addr_ready : ~data_cb_miso_i.wr_addr_ready;
       if (ap_wr_txn) begin
-        data_cb_mosi_o.wr_addr       = {lsu_req_addr[63:3],3'b0};
+        data_cb_mosi_o.wr_addr       = lsu_req_addr;
         data_cb_mosi_o.wr_size       = lsu_cb_size(lsu_i.width);
         data_cb_mosi_o.wr_addr_valid = ~bp_data;
       end
       else begin
-        data_cb_mosi_o.rd_addr       = {lsu_req_addr[63:3],3'b0};
+        data_cb_mosi_o.rd_addr       = lsu_req_addr;
         data_cb_mosi_o.rd_size       = lsu_cb_size(lsu_i.width);
         data_cb_mosi_o.rd_addr_valid = ~bp_data;
       end
