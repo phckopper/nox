@@ -261,7 +261,7 @@ module decode
                  (instr_dec.rd == 'h0) &&
                  (instr_dec.rs1 == 'h0)) begin
           case (1)
-            (instr_dec.rs2 == 'h0): begin
+            (instr_dec.rs2 == 'h0 && instr_dec.f7 == 'h0): begin
                 next_id_ex.ecall = 'b1;
             end
             (instr_dec.rs2 == 'h1): begin
@@ -277,6 +277,12 @@ module decode
             ((instr_dec.rs2 == 'h5) && (instr_dec.f7 == 'h8)): begin
               next_id_ex.wfi = 'b1;
             end
+            // SFENCE.VMA with rs1=x0 (flush all VAs): funct7=0001001
+            (instr_dec.f7 == 'h9): begin
+              next_id_ex.sfence_vma = 'b1;
+              next_id_ex.rs1_op     = REG_RF;
+              next_id_ex.rs2_op     = REG_RF;
+            end
             default: begin
               if (fetch_valid_i && id_ready_i) begin
                 next_id_ex.trap.active  = 1'b1;
@@ -289,9 +295,9 @@ module decode
         else if ((instr_dec.f3 == RV_F3_ADD_SUB) &&
                  (instr_dec.rd == 'h0) &&
                  (instr_dec.f7 == 'h9)) begin
-          // SFENCE.VMA: funct7=0001001, funct3=000, rd=0; rs1=vaddr, rs2=asid
+          // SFENCE.VMA with rs1!=x0 (flush specific VA): funct7=0001001
           next_id_ex.sfence_vma = 'b1;
-          next_id_ex.rs1_op     = REG_RF;  // carry rs1/rs2 for TLB invalidation
+          next_id_ex.rs1_op     = REG_RF;
           next_id_ex.rs2_op     = REG_RF;
         end
         else begin
@@ -470,6 +476,10 @@ module decode
       if (j % 10000000 == 0)
         $display("[HEARTBEAT] %0d instructions retired, last pc=%08h", j, id_ex_ff.pc_dec);
     end
+    // Decode pipeline trace: print every cycle when dec_valid_ff or fetch_valid_i is nonzero
+    if (dec_valid_ff || fetch_valid_i)
+      $display("[DEC] @%0t dec_vld=%0b fetch_vld=%0b jump=%0b pc=%h fetch_instr=%h id_rdy=%0b",
+               $time, dec_valid_ff, fetch_valid_i, jump_i, id_ex_ff.pc_dec, fetch_instr_i, id_ready_i);
   end
 
   `CLK_PROC(clk, rst) begin

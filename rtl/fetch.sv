@@ -237,11 +237,23 @@ module fetch
     next_discard = discard_cnt_ff;
 
     if (redirect) begin
-      // All currently outstanding + any pending address beat become stale
-      next_discard = ot_cnt_ff + {2'b0, req_ff && ~addr_ready};
-      // Subtract responses arriving this very cycle (they're from old path too)
-      // Actually, responses this cycle were already in flight before redirect
-      // They should be discarded. The counter already includes them in ot_cnt.
+      // Compute how many future AXI responses will be stale:
+      //   ot_cnt_ff         — all currently in-flight
+      //   - data_consumed   — the response arriving THIS cycle is consumed via
+      //                       data_ready=1 (jump keeps load_word=0); it leaves
+      //                       ot automatically and won't arrive again, so we
+      //                       must not count it in next_discard
+      //   + req_stale       — address accepted this cycle (req_ff && addr_ready)
+      //                       OR address pending (req_ff && ~addr_ready): its
+      //                       response will arrive in the future as stale, UNLESS
+      //                       it happens to be the same 8-byte word as the redirect
+      //                       target (in which case the response is valid and will
+      //                       be loaded normally after the redirect).
+      // req_ff is stale unless it is already pointing at the redirect target word
+      next_discard = ot_cnt_ff
+                     - {2'b0, data_valid && data_ready}
+                     + {2'b0, req_ff && ~(addr_ready &&
+                                          (fetch_addr_ff == {redirect_addr[63:3], 3'b0}))};
     end else if (data_valid && data_ready && discard_cnt_ff > 0) begin
       next_discard = discard_cnt_ff - 3'd1;
     end
@@ -497,6 +509,27 @@ module fetch
     .call_ret_addr_i   (bp_call_ret_addr_i),
     .is_return_i       (bp_is_return_i)
   );
+
+`ifdef SIMULATION
+  always_ff @(posedge clk) begin
+    // AXI address phase
+    if (req_ff && addr_ready)
+      $display("[FETCH] @%0t AXI_ADDR_ACCEPT addr=%h st=%0d ot=%0d disc=%0d",
+               $time, instr_cb_mosi_o.rd_addr, st_ff, ot_cnt_ff, discard_cnt_ff);
+    // AXI data (response) phase
+    if (data_valid && data_ready)
+      $display("[FETCH] @%0t AXI_DATA rsp=%0d disc=%0d load=%0b wbuf_valid=%0b",
+               $time, instr_cb_miso_i.rd_resp, discard_cnt_ff, load_word, word_valid_ff);
+    // Instruction produced into L0 FIFO
+    if (write_l0)
+      $display("[FETCH] @%0t L0_WRITE instr=%h pc=%h compressed=%0b",
+               $time, align_instr, instr_pc_ff, align_compressed);
+    // Redirect
+    if (redirect)
+      $display("[FETCH] @%0t REDIRECT to=%h jump=%0b st=%0d req=%0b ot=%0d disc=%0d",
+               $time, redirect_addr, jump, st_ff, req_ff, ot_cnt_ff, discard_cnt_ff);
+  end
+`endif
 
 `ifdef COCOTB_SIM
   `ifdef XCELIUM

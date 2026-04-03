@@ -1,5 +1,6 @@
--O3 --x-assign fast --x-initial fast --noassert
+-O3 --x-assign fast --x-initial fast --noassert --converge-limit 10000
 -Wno-UNOPTFLAT
+-Wno-UNOPTTHREADS
 -Wno-TIMESCALEMOD
 //--coverage
 --exe

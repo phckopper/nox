@@ -9,6 +9,7 @@ module csr
   import amba_axi_pkg::*;
   import amba_ahb_pkg::*;
   import nox_utils_pkg::*;
+  import mmu_pkg::*;
 #(
   parameter int SUPPORT_DEBUG = 1,
   parameter int MTVEC_DEFAULT_VAL = 'h1000, // 4KB
@@ -36,9 +37,16 @@ module csr
   input                     sret_i,
   input                     wfi_i,
   input   s_trap_lsu_info_t lsu_trap_i,
+  // MMU page fault (from mmu.sv via execute)
+  input   mmu_fault_t       mmu_fault_i,
+  input   logic             mmu_fault_valid_i,
+  input   pc_t              lsu_ap_pc_i,   // address-phase PC (for load/store PF mepc)
   output  s_trap_info_t     trap_o,
-  // Privilege mode output (used by execute for SFENCE checks and future MMU)
-  output  logic [1:0]       priv_mode_o
+  // Privilege mode + MMU control outputs
+  output  logic [1:0]       priv_mode_o,
+  output  logic [63:0]      satp_o,
+  output  logic             sum_o,
+  output  logic             mxr_o
 );
   typedef struct packed {
     csr_t   op;
@@ -478,17 +486,63 @@ module csr
         next_trap.active = 'b1;
         next_priv_mode   = `RV_PRIV_M;
       end
+      // ---- Instruction page fault (cause 12) ----
+      (mmu_fault_valid_i && mmu_fault_i.instr_pf): begin
+        if (csr_medeleg_ff[6'd12] && priv_mode_ff != `RV_PRIV_M) begin
+          next_sepc        = mmu_fault_i.va;   // faulting VA = faulting PC
+          next_scause      = `PF_INSTR;
+          next_stval       = mmu_fault_i.va;
+          next_priv_mode   = `RV_PRIV_S;
+        end else begin
+          next_mepc        = mmu_fault_i.va;
+          next_mcause      = `PF_INSTR;
+          next_mtval       = mmu_fault_i.va;
+          next_priv_mode   = `RV_PRIV_M;
+        end
+        next_trap.active = 'b1;
+      end
+      // ---- Load page fault (cause 13) ----
+      (mmu_fault_valid_i && mmu_fault_i.load_pf): begin
+        if (csr_medeleg_ff[6'd13] && priv_mode_ff != `RV_PRIV_M) begin
+          next_sepc        = lsu_ap_pc_i;
+          next_scause      = `PF_LOAD;
+          next_stval       = mmu_fault_i.va;
+          next_priv_mode   = `RV_PRIV_S;
+        end else begin
+          next_mepc        = lsu_ap_pc_i;
+          next_mcause      = `PF_LOAD;
+          next_mtval       = mmu_fault_i.va;
+          next_priv_mode   = `RV_PRIV_M;
+        end
+        next_trap.active = 'b1;
+      end
+      // ---- Store/AMO page fault (cause 15) ----
+      (mmu_fault_valid_i && mmu_fault_i.store_pf): begin
+        if (csr_medeleg_ff[6'd15] && priv_mode_ff != `RV_PRIV_M) begin
+          next_sepc        = lsu_ap_pc_i;
+          next_scause      = `PF_STORE;
+          next_stval       = mmu_fault_i.va;
+          next_priv_mode   = `RV_PRIV_S;
+        end else begin
+          next_mepc        = lsu_ap_pc_i;
+          next_mcause      = `PF_STORE;
+          next_mtval       = mmu_fault_i.va;
+          next_priv_mode   = `RV_PRIV_M;
+        end
+        next_trap.active = 'b1;
+      end
       default: next_trap  = s_trap_info_t'('0);
     endcase
 
     irq_vec = {dbg_irq_mtime, dbg_irq_msoft, dbg_irq_mtime};
 
     // These traps don't need eval_trap_i to fire
-    traps_can_happen_wo_exec = (fetch_trap_i.active       ||
-                                lsu_trap_i.st.active      ||
-                                lsu_trap_i.ld.active      ||
-                                lsu_trap_i.st_mis.active  ||
-                                lsu_trap_i.ld_mis.active);
+    traps_can_happen_wo_exec = (fetch_trap_i.active          ||
+                                lsu_trap_i.st.active         ||
+                                lsu_trap_i.ld.active         ||
+                                lsu_trap_i.st_mis.active     ||
+                                lsu_trap_i.ld_mis.active     ||
+                                mmu_fault_valid_i);
 
     if (~traps_can_happen_wo_exec) begin
       if (~eval_trap_i && ~wfi_i) begin
@@ -564,8 +618,11 @@ module csr
       next_mstatus[`RV_MST_SPP]  = 'b0;
     end
 
-    trap_o = trap_ff;
+    trap_o      = trap_ff;
     priv_mode_o = priv_mode_ff;
+    satp_o      = csr_satp_ff;
+    sum_o       = csr_mstatus_ff[`RV_MST_SUM];
+    mxr_o       = csr_mstatus_ff[`RV_MST_MXR];
 
   end
 
@@ -611,6 +668,13 @@ module csr
       csr_cycle_ff    <=  next_cycle;
       priv_mode_ff    <=  next_priv_mode;
       trap_ff         <=  next_trap;
+`ifdef SIMULATION
+      if (next_priv_mode != priv_mode_ff)
+        $display("[CSR] @%0t priv_mode %0b -> %0b", $time, priv_mode_ff, next_priv_mode);
+      if (next_trap.active && next_trap.pc_addr != '0)
+        $display("[CSR] @%0t trap.active pc_addr=%h mepc=%h mcause=%0d mret=%b sret=%b", $time,
+                 next_trap.pc_addr, next_mepc, next_mcause[5:0], mret_i, sret_i);
+`endif
     end
   end
 endmodule

@@ -31,6 +31,7 @@ module lsu
   // To EXE stg
   output  logic             lsu_bp_o,
   output  pc_t              lsu_pc_o,
+  output  pc_t              lsu_ap_pc_o,   // address-phase PC (= lsu_i.pc_addr when ap active)
   // To write-back datapath
   output  logic             lsu_bp_data_o,
   output  s_lsu_op_t        wb_lsu_o,
@@ -38,7 +39,9 @@ module lsu
   // Core data bus I/F
   output  s_cb_mosi_t       data_cb_mosi_o,
   input   s_cb_miso_t       data_cb_miso_i,
-  output  s_trap_lsu_info_t lsu_trap_o
+  output  s_trap_lsu_info_t lsu_trap_o,
+  // MMU kill: forces lsu_ff=0 and drops lsu_bp (on page fault)
+  input   logic             kill_lsu_i
 );
   // ── Normal load/store pipeline registers ──────────────────────────────────
   s_lsu_op_t lsu_ff, next_lsu;
@@ -207,6 +210,12 @@ module lsu
                               (data_cb_mosi_o.wr_addr_valid && ~data_cb_miso_i.wr_addr_ready);
     end
 
+    // Page fault kill: clear the address lock so the next instruction after the
+    // trap uses its own address rather than the faulting address.
+    if (kill_lsu_i) begin
+      next_lock = 1'b0;
+    end
+
     next_locked_addr = lock_ff ? locked_addr_ff : lsu_req_addr;
 
     // ── P11: AMO state machine ─────────────────────────────────────────────────
@@ -324,7 +333,8 @@ module lsu
     end
 
     // ── Combined backpressure ──────────────────────────────────────────────────
-    lsu_bp_o = bp_addr || bp_data || bp_amo;
+    // kill_lsu_i (from MMU page fault) forces lsu_bp_o=0 so execute can advance
+    lsu_bp_o = (bp_addr || bp_data || bp_amo) && ~kill_lsu_i;
     lsu_bp_data_o = bp_data;
 
     next_lsu = lsu_ff;
@@ -337,7 +347,8 @@ module lsu
 
     // ── Outputs to writeback ───────────────────────────────────────────────────
     wb_lsu_o = lsu_ff;
-    lsu_pc_o = lsu_ff.pc_addr;
+    lsu_pc_o    = lsu_ff.pc_addr;
+    lsu_ap_pc_o = lsu_i.pc_addr;    // address-phase PC (for MMU page fault mepc)
 
     // lsu_data_o mux:
     //   - Normal load / LR.W → AXI read data (fmt_load in WB handles alignment)
@@ -406,6 +417,12 @@ module lsu
       lr_reserved_ff       <= 1'b0;
       lr_addr_ff           <= '0;
       sc_success_ff        <= 1'b0;
+    end
+    else if (kill_lsu_i) begin
+      // MMU page fault: clear the LSU pipeline register so execute can advance
+      lsu_ff               <= s_lsu_op_t'('0);
+      dp_done_ff           <= 1'b0;
+      lock_ff              <= 1'b0;  // clear stale address lock so next instr uses its own addr
     end
     else begin
       lsu_ff               <= next_lsu;

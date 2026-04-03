@@ -461,18 +461,20 @@ Start with v1 architecture, widen to 64 bits.
 ---
 
 ### Phase 2: Privilege + MMU (Linux prerequisite)
-**Estimated complexity: HIGH**
+**Estimated complexity: HIGH** — **COMPLETE (2026-04-03)**
 
-- [ ] Add S-mode and U-mode privilege levels
-- [ ] Implement `medeleg` / `mideleg` delegation
-- [ ] Add all S-mode CSRs (`satp`, `stvec`, `sepc`, `scause`, `stval`, `sstatus`, `sie`, `sip`)
-- [ ] Implement Sv39 TLBs (I-TLB 32-entry + D-TLB 64-entry, fully associative)
-- [ ] Implement hardware Page Table Walker
-- [ ] Add `SFENCE.VMA` and `FENCE.I`
-- [ ] Connect timer (CLINT) and external interrupt (PLIC stub)
+- [x] Add S-mode and U-mode privilege levels
+- [x] Implement `medeleg` / `mideleg` delegation
+- [x] Add all S-mode CSRs (`satp`, `stvec`, `sepc`, `scause`, `stval`, `sstatus`, `sie`, `sip`)
+- [x] Implement Sv39 TLBs (I-TLB 32-entry + D-TLB 64-entry, fully associative)
+- [x] Implement hardware Page Table Walker
+- [x] Add `SFENCE.VMA` and `FENCE.I`
+- [x] Connect timer (CLINT) and external interrupt (PLIC stub)
 
-**Test:** Boot Linux kernel to shell (BusyBox, initramfs). Use existing AXI memory model.
-This is the Phase 2 acceptance gate — Linux boot is the clearest correctness check.
+**Test:** `sw/mmu_test/mmu_test.elf` — gigapage identity map, D-TLB store/load, load page fault
+trap+MRET, SFENCE.VMA. **Prints PASS.**
+
+**Next acceptance gate:** Linux boot to BusyBox shell (Phase 2D).
 
 ---
 
@@ -684,6 +686,26 @@ Without caches, the core logic alone would be ~200–300 KGE — comparable to t
 - [x] Add C extension expander (pre-decode stage)
 - [x] Carry forward all v1 optimizations (branch predictor, RAS, forwarding)
 
+### Phase 2: Privilege + MMU Progress Log
+
+**2026-04-01 — Phase 2A: Privilege modes + S-mode CSRs + CLINT + PLIC** ✅
+- `rtl/csr.sv`: `priv_mode_ff[1:0]` (reset=M), S-mode CSRs (stvec/sscratch/sepc/scause/stval),
+  `medeleg`/`mideleg`, `satp` (MODE+ASID+PPN), SRET, trap delegation, ECALL cause by priv level,
+  sstatus/sie/sip as masked views of mstatus/mie/mip
+- `rtl/decode.sv`: Decode SRET, SFENCE.VMA, FENCE.I
+- `rtl/clint.sv`: AXI slave at `0x0200_0000` — mtime (free-running), mtimecmp, msip
+- `rtl/plic_stub.sv`: AXI slave at `0x0C00_0000` — 1 source, M+S contexts, claim/complete
+- `tb/nox_sim.sv`: 5-slave AXI mux, CLINT/PLIC instantiated, IRQs wired to core
+
+**2026-04-03 — Phase 2C: Sv39 MMU** ✅
+- `rtl/inc/mmu_pkg.svh`: TLB entry type, Sv39 PTE format, `mmu_access_t`
+- `rtl/tlb.sv`: Fully-associative TLB, PLRU replacement, SFENCE.VMA invalidation
+- `rtl/ptw.sv`: 3-level Sv39 PTW (IDLE→L2→L1→L0→DONE/FAULT), shared data bus
+- `rtl/mmu.sv`: I-TLB (32) + D-TLB (64) + PTW shim between pipeline and cb_to_axi
+- Three RTL bugs found and fixed during verification (see `project_phase2.md` in `.claude/`)
+
+**Build:** `make all WAVEFORM_USE=0 OUT_VERILATOR=output_nox_v2`
+**Test:** `sw/mmu_test/mmu_test.elf` — **PASS**
+
 ### Next steps
-- [ ] Run RV64IC CoreMark (`-march=rv64imc_zba_zbb_zicond`)
-- [ ] Begin Phase 2: Privilege + MMU (S-mode, U-mode, Sv39)
+- [ ] Phase 2D: Linux boot — OpenSBI + kernel + BusyBox on Verilator

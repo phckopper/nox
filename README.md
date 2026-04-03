@@ -17,33 +17,54 @@
 * [License](#lic)
 
 ## <a name="intro"></a> Introduction
-NoX is a 32-bit RISC-V core designed in System Verilog language aiming both `FPGA` and `ASIC` flows. The core was projected to be easily integrated and simulated as part of an SoC, with `makefile` targets for simple standalone simulation or with an interconnect and peripherals. In short, the core specs are listed here:
+NoX is a RISC-V core designed in System Verilog language aiming both `FPGA` and `ASIC` flows. The core was projected to be easily integrated and simulated as part of an SoC, with `makefile` targets for simple standalone simulation or with an interconnect and peripherals. In short, the core specs are listed here:
 
-- RV32IMAZba_Zbb_ZicondZicsr
+- **RV64IMAZba_Zbb_ZicondZicsr + C extension** (RV64IMACZba_Zbb_ZicondZicsr)
 - 4 stages / single-issue / in-order pipeline
-- M-mode privileged spec.
-- 2.893 CoreMark/MHz (simulation, NanGate 45nm @ 333 MHz, -O2, RV32IM + Zba/Zbb/Zicond, 128-entry BTB + full Zbb)
-- Software/External/Timer interrupt
-- Support non/vectored IRQs
-- Configurable fetch FIFO size
+- M-mode + S-mode + U-mode privileged spec (Sv39 virtual memory)
+- **Sv39 MMU**: I-TLB (32-entry) + D-TLB (64-entry) + hardware PTW
+- CLINT (timer/software IRQ) + PLIC stub (external IRQ, M+S contexts)
+- 2.893 CoreMark/MHz (RV32 baseline, NanGate 45nm @ 333 MHz; RV64 re-evaluation pending)
+- Software/External/Timer interrupt (M-mode and S-mode)
+- 128-entry BTB + 256-entry XOR-folded BHT + 4-entry RAS branch predictor
 - AXI4 or AHB I/F
+
+> **Status (2026-04-03):** Phase 2 (privilege + MMU) complete. `mmu_test` passes Sv39
+> store/load round-trip, page fault handling, and SFENCE.VMA. Next: Linux boot (Phase 2D).
 
 The CSRs that are implemented in the core are listed down below, more CSRs can be easily integrated within [rtl/csr.sv](rtl/csr.sv) by extending the decoder. Instructions such as `ECALL/EBREAK` are supported as well and will synchronously trap the core, forcing a jump to the `MTVEC` value. All interrupts will redirect the core to the `MTVEC` as well as it is considered asynchronous traps.
 
-|    |    CSR   |           Description           |
-|:--:|:--------:|:-------------------------------:|
-|  1 |  mstatus |         Status register         |
-|  2 |    mie   |     Machine Interrupt enable    |
-|  3 |   mtvec  |     Trap-vector base-address    |
-|  4 | mscratch |         Scratch register        |
-|  5 |   mepc   |    Exception program counter    |
-|  6 |  mcause  |      Machine cause register     |
-|  7 |   mtval  |        Machine trap value       |
-|  8 |    mip   |    Machine pending interrupt    |
-|  9 |   cycle  |       RO shadow of mcycle       |
-| 10 |  cycleh  | RO shadow of mcycle [Upper 32b] |
-| 11 |   misa   |       Machine ISA register      |
-| 12 |  mhartid |         Hart ID register        |
+**M-mode CSRs:**
+
+|    |    CSR    |           Description           |
+|:--:|:---------:|:-------------------------------:|
+|  1 |  mstatus  |         Status register         |
+|  2 |    mie    |     Machine Interrupt enable    |
+|  3 |   mtvec   |     Trap-vector base-address    |
+|  4 | mscratch  |         Scratch register        |
+|  5 |   mepc    |    Exception program counter    |
+|  6 |  mcause   |      Machine cause register     |
+|  7 |   mtval   |        Machine trap value       |
+|  8 |    mip    |    Machine pending interrupt    |
+|  9 | medeleg   |    Exception delegation mask    |
+| 10 | mideleg   |    Interrupt delegation mask    |
+| 11 |   cycle   |       RO shadow of mcycle       |
+| 12 |   misa    |       Machine ISA register      |
+| 13 |  mhartid  |         Hart ID register        |
+
+**S-mode CSRs:**
+
+|    |    CSR    |           Description           |
+|:--:|:---------:|:-------------------------------:|
+|  1 |  sstatus  |   S-mode status (mstatus view)  |
+|  2 |    sie    |  S-mode interrupt enable (view) |
+|  3 |   stvec   |  S-mode trap-vector base-address|
+|  4 | sscratch  |      S-mode scratch register    |
+|  5 |   sepc    |   S-mode exception program ctr  |
+|  6 |  scause   |     S-mode cause register       |
+|  7 |   stval   |      S-mode trap value          |
+|  8 |    sip    | S-mode pending interrupt (view) |
+|  9 |   satp    |   Address translation + MMU     |
 
 ## <a name="quick"></a> Quickstart
 **NoX** uses a [docker container](https://hub.docker.com/repository/docker/aignacio/nox) to build and simulate a standalone instance of the core or an SoC requiring no additional tools to the user apart from docker itself. Please be aware that the process of building the simulator might require more resources than what is allocated to the `docker`, therefore if the output shows `Killed`, increase the **memory** and the **cpu** resources. To quickly build a simple instance of the core with two memories and simulate it through linux, follow:

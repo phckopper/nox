@@ -19,6 +19,8 @@ module wb
   input   rdata_t       lsu_rd_data_i,
   input                 lsu_bp_i,
   input                 lsu_bp_data_i,
+  // MMU fault: suppress writeback when page fault drains through WB
+  input   logic         mmu_fault_valid_i,
   // To DEC stg
   output  s_wb_t        wb_dec_o,
   output  rdata_t       wb_fwd_load_o,
@@ -55,7 +57,7 @@ module wb
 
   always_comb begin : mux_for_w_rf
     next_lock        = 'b0;
-    wb_dec_o.we_rd   = ex_mem_wb_i.we_rd;
+    wb_dec_o.we_rd   = mmu_fault_valid_i ? 1'b0 : ex_mem_wb_i.we_rd;
     wb_dec_o.rd_data = ex_mem_wb_i.result;
     wb_dec_o.rd_addr = ex_mem_wb_i.rd_addr;
 

@@ -31,6 +31,7 @@ module execute
   output  s_lsu_op_t        lsu_o,
   input                     lsu_bp_i,
   input   pc_t              lsu_pc_i,
+  input   pc_t              lsu_ap_pc_i,  // address-phase PC (for MMU PF mepc)
   // IRQs
   input   s_irq_t           irq_i,
   // To FETCH stg
@@ -51,8 +52,21 @@ module execute
   // Trap signals
   input   s_trap_info_t     fetch_trap_i,
   input   s_trap_lsu_info_t lsu_trap_i,
+  // MMU page fault (from mmu.sv)
+  input   mmu_pkg::mmu_fault_t  mmu_fault_i,
+  input   logic             mmu_fault_valid_i,
   // Current privilege mode (M=11, S=01, U=00)
-  output  logic [1:0]       priv_mode_o
+  output  logic [1:0]       priv_mode_o,
+  // MMU control outputs (from CSR)
+  output  logic [63:0]      satp_o,
+  output  logic             sum_o,
+  output  logic             mxr_o,
+  // SFENCE.VMA operands (to MMU)
+  output  logic             sfence_vma_o,
+  output  logic [63:0]      sfence_vaddr_o,
+  output  logic [63:0]      sfence_asid_o,
+  output  logic             sfence_rs1_x0_o,
+  output  logic             sfence_rs2_x0_o
 );
   typedef enum logic {
     NO_FWD,
@@ -92,6 +106,8 @@ module execute
   logic         will_jump_next_clk;
   logic         eval_trap;
   logic [1:0]   priv_mode_csr;
+  logic [63:0]  satp_csr;
+  logic         sum_csr, mxr_csr;
   logic         load_use_hazard;
   logic         mispred_not_taken;
   logic         wrong_path;
@@ -102,6 +118,14 @@ module execute
   logic         muldiv_stall;        // unit is computing (stall pipeline)
   logic         muldiv_result_valid; // unit done: result ready this cycle
   rdata_t       muldiv_result;       // result from unit
+
+  // Registered sfence/fence.i flush-pending signals.
+  // Break the combinational loop: id_ex_i.sfence_vma → fetch_req_o → jump_i
+  // (decode) → id_ex_i.sfence_vma. By using a registered flag to drive
+  // fetch_req_o, Verilator sees no combinational cycle.
+  logic         sfence_flush_pending_ff;
+  pc_t          sfence_pc_ff;
+  logic         sfence_compressed_ff;
 
   // A correct prediction means the BP already redirected fetch to the right
   // target, so execute must NOT fire fetch_req_o again (that would flush the
@@ -546,11 +570,12 @@ module execute
     end
 
     // SFENCE.VMA and FENCE.I: flush the fetch pipeline to pc+instr_size.
-    // The MMU will handle TLB invalidation via the sfence_vma signal routed
-    // from id_ex_i.sfence_vma (visible to nox.sv).
-    if (id_ex_i.sfence_vma || id_ex_i.fence_i) begin
+    // Uses a registered pending flag (sfence_flush_pending_ff) rather than
+    // id_ex_i.sfence_vma directly — this breaks the combinational loop:
+    //   id_ex_i.sfence_vma → fetch_req_o → jump_i → id_ex_i.sfence_vma
+    if (sfence_flush_pending_ff) begin
       fetch_req_o  = 'b1;
-      fetch_addr_o = id_ex_i.pc_dec + (id_ex_i.is_compressed ? 'd2 : 'd4);
+      fetch_addr_o = sfence_pc_ff + (sfence_compressed_ff ? 'd2 : 'd4);
     end
 
     // When a JAL/taken-branch is correctly predicted, fetch_req_o stays 0
@@ -592,6 +617,9 @@ module execute
       j_addr_matched_pred_ff       <= 1'b0;
       rd_addr_for_jump_ff          <= raddr_t'('0);
       rs1_addr_for_jump_ff         <= raddr_t'('0);
+      sfence_flush_pending_ff      <= 1'b0;
+      sfence_pc_ff                 <= pc_t'('0);
+      sfence_compressed_ff         <= 1'b0;
     end
     else begin
       ex_mem_wb_ff                 <= next_ex_mem_wb;
@@ -606,6 +634,16 @@ module execute
       j_addr_matched_pred_ff       <= next_j_addr_matched_pred;
       rd_addr_for_jump_ff          <= next_rd_addr_for_jump;
       rs1_addr_for_jump_ff         <= next_rs1_addr_for_jump;
+      // Capture sfence/fence.i for one cycle; clear on the following cycle.
+      // The pending flag drives fetch_req_o instead of id_ex_i.sfence_vma,
+      // breaking the combinational loop through decode's jump_i path.
+      if ((id_ex_i.sfence_vma || id_ex_i.fence_i) && !sfence_flush_pending_ff) begin
+        sfence_flush_pending_ff    <= 1'b1;
+        sfence_pc_ff               <= id_ex_i.pc_dec;
+        sfence_compressed_ff       <= id_ex_i.is_compressed;
+      end else begin
+        sfence_flush_pending_ff    <= 1'b0;
+      end
     end
   end
 
@@ -654,6 +692,18 @@ module execute
   always_ff @(posedge clk) begin
     if (rst) begin  // rst=1 = normal operation (active-low reset)
       perf_cycles <= perf_cycles + 1;
+
+      // All instructions entering execute — trace PC and LSU type
+      if (id_valid_i && id_ready_o)
+        $display("[EX] @%0t ISSUE pc=%h lsu=%0d rs1=%0d rs2=%0d wb_rd=%0d wb_we=%0b rs1_fwd=%0b",
+                 $time, id_ex_i.pc_dec, id_ex_i.lsu,
+                 id_ex_i.rs1_addr, id_ex_i.rs2_addr,
+                 ex_mem_wb_ff.rd_addr, ex_mem_wb_ff.we_rd, rs1_fwd);
+      // Store address debug trace (including during lsu_bp replay)
+      if ((id_ex_i.lsu == LSU_STORE) && !wrong_path && id_valid_i)
+        $display("[EX] @%0t STORE pc=%h addr=%h rs1_data_i=%h rs1_fwd=%0b ex_wb_rd=%0d id_rs1=%0d lsu_bp=%0b",
+                 $time, id_ex_i.pc_dec, lsu_o.addr, rs1_data_i,
+                 rs1_fwd, ex_mem_wb_ff.rd_addr, id_ex_i.rs1_addr, lsu_bp_i);
 
       // Instructions entering execute (decode advances)
       if (id_valid_i && id_ready_o)
@@ -814,9 +864,25 @@ module execute
     .sret_i             (id_ex_i.sret),
     .wfi_i              (id_ex_i.wfi),
     .lsu_trap_i         (lsu_trap_i),
+    .mmu_fault_i        (mmu_fault_i),
+    .mmu_fault_valid_i  (mmu_fault_valid_i),
+    .lsu_ap_pc_i        (lsu_ap_pc_i),
     .trap_o             (trap_out),
-    .priv_mode_o        (priv_mode_csr)
+    .priv_mode_o        (priv_mode_csr),
+    .satp_o             (satp_csr),
+    .sum_o              (sum_csr),
+    .mxr_o              (mxr_csr)
   );
 
-  assign priv_mode_o = priv_mode_csr;
+  assign priv_mode_o    = priv_mode_csr;
+  assign satp_o         = satp_csr;
+  assign sum_o          = sum_csr;
+  assign mxr_o          = mxr_csr;
+
+  // SFENCE.VMA: forward operands to MMU (combinational from execute stage)
+  assign sfence_vma_o    = id_ex_i.sfence_vma;
+  assign sfence_vaddr_o  = op1;   // rs1 operand
+  assign sfence_asid_o   = op2;   // rs2 operand
+  assign sfence_rs1_x0_o = (id_ex_i.rs1_addr == 5'h0);
+  assign sfence_rs2_x0_o = (id_ex_i.rs2_addr == 5'h0);
 endmodule

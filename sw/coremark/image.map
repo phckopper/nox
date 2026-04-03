@@ -1,396 +1,322 @@
+Archive member included to satisfy reference by file (symbol)
+
+/opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memcpy.o)
+                              /tmp/ccuesya7.o (memcpy)
+/opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memset.o)
+                              /tmp/ccuesya7.o (memset)
 
 Discarded input sections
 
- .data          0x00000000        0x0 ./core_list_join.o
- .bss           0x00000000        0x0 ./core_list_join.o
- .data          0x00000000        0xc ./core_main.o
- .bss           0x00000000        0x0 ./core_main.o
- .data          0x00000000        0x0 ./core_matrix.o
- .bss           0x00000000        0x0 ./core_matrix.o
- .data          0x00000000        0x0 ./core_state.o
- .bss           0x00000000        0x0 ./core_state.o
- .data          0x00000000        0x0 ./core_util.o
- .bss           0x00000000        0x0 ./core_util.o
- .data          0x00000000        0x0 ./nox/printf.o
- .bss           0x00000000        0x0 ./nox/printf.o
- .data          0x00000000        0x0 ./nox/core_portme.o
- .bss           0x00000000        0x0 ./nox/core_portme.o
- .srodata       0x00000000       0x18 ./nox/core_portme.o
- .text          0x00000000        0x0 ./nox/crt0.o
- .data          0x00000000        0x0 ./nox/crt0.o
- .bss           0x00000000        0x0 ./nox/crt0.o
- .text          0x00000000       0x44 ./nox/startup.o
- .data          0x00000000        0x0 ./nox/startup.o
- .bss           0x00000000        0x0 ./nox/startup.o
+ .data          0x0000000000000000        0x0 /tmp/ccJg2Tca.o
+ .bss           0x0000000000000000        0x0 /tmp/ccJg2Tca.o
+ .data          0x0000000000000000       0x18 /tmp/ccjU4EPJ.o
+ .bss           0x0000000000000000        0x0 /tmp/ccjU4EPJ.o
+ .data          0x0000000000000000        0x0 /tmp/cc2E2vEN.o
+ .bss           0x0000000000000000        0x0 /tmp/cc2E2vEN.o
+ .data          0x0000000000000000        0x0 /tmp/ccLD9Ili.o
+ .bss           0x0000000000000000        0x0 /tmp/ccLD9Ili.o
+ .data          0x0000000000000000        0x0 /tmp/ccHWTZep.o
+ .bss           0x0000000000000000        0x0 /tmp/ccHWTZep.o
+ .data          0x0000000000000000        0x0 /tmp/ccBH3LkY.o
+ .bss           0x0000000000000000        0x0 /tmp/ccBH3LkY.o
+ .data          0x0000000000000000        0x0 /tmp/ccx9ke4S.o
+ .bss           0x0000000000000000        0x0 /tmp/ccx9ke4S.o
+ .srodata       0x0000000000000000       0x30 /tmp/ccx9ke4S.o
+ .text          0x0000000000000000        0x0 /tmp/cc3ozKxk.o
+ .data          0x0000000000000000        0x0 /tmp/cc3ozKxk.o
+ .bss           0x0000000000000000        0x0 /tmp/cc3ozKxk.o
+ .text          0x0000000000000000       0x38 /tmp/ccuesya7.o
+ .data          0x0000000000000000        0x0 /tmp/ccuesya7.o
+ .bss           0x0000000000000000        0x0 /tmp/ccuesya7.o
+ .text          0x0000000000000000        0x0 /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memcpy.o)
+ .data          0x0000000000000000        0x0 /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memcpy.o)
+ .bss           0x0000000000000000        0x0 /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memcpy.o)
+ .data          0x0000000000000000        0x0 /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memset.o)
+ .bss           0x0000000000000000        0x0 /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memset.o)
 
 Memory Configuration
 
 Name             Origin             Length             Attributes
-IRAM             0x80000000         0x00020000         axrl!w
-DRAM             0x10000000         0x00008000         axw!rl
-*default*        0x00000000         0xffffffff
+IRAM             0x0000000080000000 0x0000000000020000 axrl !w
+DRAM             0x0000000010000000 0x0000000000008000 axw !rl
+*default*        0x0000000000000000 0xffffffffffffffff
 
 Linker script and memory map
 
-LOAD /tmp/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32im/ilp32/libgcc.a
-LOAD /tmp/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/../../../../riscv-none-elf/lib/rv32im/ilp32/libm.a
-LOAD /tmp/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/../../../../riscv-none-elf/lib/rv32im/ilp32/libc.a
-LOAD ./core_list_join.o
-LOAD ./core_main.o
-LOAD ./core_matrix.o
-LOAD ./core_state.o
-LOAD ./core_util.o
-LOAD ./nox/printf.o
-LOAD ./nox/core_portme.o
-LOAD ./nox/crt0.o
-LOAD ./nox/startup.o
-LOAD /tmp/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32im/ilp32/libgcc.a
+LOAD /tmp/ccJg2Tca.o
+LOAD /tmp/ccjU4EPJ.o
+LOAD /tmp/cc2E2vEN.o
+LOAD /tmp/ccLD9Ili.o
+LOAD /tmp/ccHWTZep.o
+LOAD /tmp/ccBH3LkY.o
+LOAD /tmp/ccx9ke4S.o
+LOAD /tmp/cc3ozKxk.o
+LOAD /tmp/ccuesya7.o
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/rv64imc_zba_zbb/lp64/libgcc.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libm.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/rv64imc_zba_zbb/lp64/libgcc.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libg_nano.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/rv64imc_zba_zbb/lp64/libgcc.a
 START GROUP
-LOAD /tmp/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/../../../../riscv-none-elf/lib/rv32im/ilp32/libc.a
-LOAD /tmp/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/../../../../riscv-none-elf/lib/rv32im/ilp32/libgloss.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/rv64imc_zba_zbb/lp64/libgcc.a
+LOAD /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a
 END GROUP
-LOAD /tmp/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32im/ilp32/libgcc.a
-                0x00000100                        _min_stack = 0x100
+                0x0000000000000100                _min_stack = 0x100
 
-.text           0x80000000     0x41a4
-                0x80000000                        _start_text = .
+.text           0x0000000080000000     0x3054
+                0x0000000080000000                _start_text = .
  *(.init)
- .init          0x80000000       0x14 ./nox/crt0.o
-                0x80000000                _start_reset
- .init          0x80000014       0x88 ./nox/startup.o
-                0x80000014                _reset
-                0x80000100                        . = (ORIGIN (IRAM) + 0x100)
- *fill*         0x8000009c       0x64 
-                0x80000100                        _start_vector = .
+ .init          0x0000000080000000       0x14 /tmp/cc3ozKxk.o
+                0x0000000080000000                _start_reset
+ .init          0x0000000080000014       0x5a /tmp/ccuesya7.o
+                0x0000000080000014                _reset
+                0x0000000080000100                . = (ORIGIN (IRAM) + 0x100)
+ *fill*         0x000000008000006e       0x92 
+                0x0000000080000100                _start_vector = .
  *(.isr_vector)
  *(.text*)
- .text          0x80000100      0x8d0 ./core_list_join.o
-                0x80000100                cmp_idx
-                0x80000154                calc_func
-                0x8000027c                cmp_complex
-                0x800002c4                copy_info
-                0x800002d8                core_list_insert_new
-                0x80000338                core_list_remove
-                0x80000360                core_list_undo_remove
-                0x80000380                core_list_find
-                0x800003cc                core_list_reverse
-                0x800003f0                core_list_mergesort
-                0x800005a0                core_bench_list
-                0x80000878                core_list_init
- .text          0x800009d0       0x88 ./core_main.o
-                0x800009d0                iterate
- .text.startup  0x80000a58      0x720 ./core_main.o
-                0x80000a58                main
- .text          0x80001178      0x788 ./core_matrix.o
-                0x80001178                core_init_matrix
-                0x8000129c                matrix_sum
-                0x80001314                matrix_mul_const
-                0x8000135c                matrix_add_const
-                0x80001394                matrix_mul_vect
-                0x800013e0                matrix_mul_matrix
-                0x80001460                matrix_mul_matrix_bitextract
-                0x800014f4                matrix_test
-                0x800018c4                core_bench_matrix
- .text          0x80001900      0x5ac ./core_state.o
-                0x80001900                core_init_state
-                0x80001a28                core_state_transition
-                0x80001d10                core_bench_state
- .text          0x80001eac      0x9dc ./core_util.o
-                0x80001eac                get_seed_32
-                0x80001f00                crcu8
-                0x8000202c                crcu16
-                0x8000224c                crcu32
-                0x8000265c                crc16
-                0x80002880                check_data_types
- .text          0x80002888      0xeac ./nox/printf.o
-                0x80003594                printf_
-                0x800035e8                sprintf_
-                0x8000363c                snprintf_
-                0x8000368c                vprintf_
-                0x800036bc                vsnprintf_
-                0x800036d8                fctprintf
- .text          0x80003734      0x118 ./nox/core_portme.o
-                0x80003734                _putchar
-                0x80003740                barebones_clock
-                0x80003750                nox_cpu_get_cycle
-                0x80003764                start_time
-                0x80003780                stop_time
-                0x8000379c                get_time
-                0x800037c0                time_in_secs
-                0x800037d4                portable_init
-                0x8000383c                portable_fini
-                0x8000384c                        _edata = .
+ .text          0x0000000080000100      0x650 /tmp/ccJg2Tca.o
+                0x0000000080000100                cmp_idx
+                0x0000000080000146                calc_func
+                0x000000008000021c                cmp_complex
+                0x0000000080000248                copy_info
+                0x000000008000025a                core_list_insert_new
+                0x00000000800002a6                core_list_remove
+                0x00000000800002bc                core_list_undo_remove
+                0x00000000800002cc                core_list_find
+                0x0000000080000306                core_list_reverse
+                0x0000000080000318                core_list_mergesort
+                0x00000000800003d8                core_bench_list
+                0x00000000800005be                core_list_init
+ .text          0x0000000080000750       0x5c /tmp/ccjU4EPJ.o
+                0x0000000080000750                iterate
+ .text.startup  0x00000000800007ac      0x77a /tmp/ccjU4EPJ.o
+                0x00000000800007ac                main
+ .text          0x0000000080000f26      0x5e8 /tmp/cc2E2vEN.o
+                0x0000000080000f26                core_init_matrix
+                0x000000008000101a                matrix_sum
+                0x0000000080001080                matrix_mul_const
+                0x00000000800010ba                matrix_add_const
+                0x00000000800010ec                matrix_mul_vect
+                0x0000000080001136                matrix_mul_matrix
+                0x000000008000119a                matrix_mul_matrix_bitextract
+                0x0000000080001210                matrix_test
+                0x00000000800014ee                core_bench_matrix
+ .text          0x000000008000150e      0x4d0 /tmp/ccLD9Ili.o
+                0x000000008000150e                core_init_state
+                0x0000000080001660                core_state_transition
+                0x00000000800018ac                core_bench_state
+ .text          0x00000000800019de      0x1a6 /tmp/ccHWTZep.o
+                0x00000000800019de                get_seed_32
+                0x0000000080001a20                crcu8
+                0x0000000080001a46                crcu16
+                0x0000000080001a92                crcu32
+                0x0000000080001b30                crc16
+                0x0000000080001b80                check_data_types
+ .text          0x0000000080001b84      0xa6e /tmp/ccBH3LkY.o
+                0x00000000800024fc                printf_
+                0x000000008000252e                sprintf_
+                0x000000008000255e                snprintf_
+                0x000000008000258c                vprintf_
+                0x00000000800025aa                vsnprintf_
+                0x00000000800025bc                fctprintf
+ .text          0x00000000800025f2       0xa6 /tmp/ccx9ke4S.o
+                0x00000000800025f2                _putchar
+                0x00000000800025fa                barebones_clock
+                0x0000000080002600                nox_cpu_get_cycle
+                0x0000000080002606                start_time
+                0x0000000080002610                stop_time
+                0x000000008000261e                get_time
+                0x000000008000262e                time_in_secs
+                0x000000008000263c                portable_init
+                0x000000008000268a                portable_fini
+ .text.memcpy   0x0000000080002698       0xdc /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memcpy.o)
+                0x0000000080002698                memcpy
+ .text          0x0000000080002774       0xaa /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memset.o)
+                0x0000000080002774                memset
+                0x000000008000281e                _edata = .
  *(.rodata*)
- .rodata.str1.4
-                0x8000384c      0x64c ./core_main.o
-                                0x572 (size before relaxing)
- .rodata        0x80003e98       0x22 ./core_main.o
- .rodata.str1.4
-                0x80003eba        0x0 ./core_state.o
-                                 0xad (size before relaxing)
- *fill*         0x80003eba        0x2 
- .rodata        0x80003ebc       0x40 ./core_state.o
- .rodata        0x80003efc      0x218 ./core_util.o
- .rodata        0x80004114       0x90 ./nox/printf.o
- .rodata.str1.4
-                0x800041a4        0x0 ./nox/core_portme.o
-                                 0x2a (size before relaxing)
+ *fill*         0x000000008000281e        0x2 
+ .rodata.str1.8
+                0x0000000080002820      0x47e /tmp/ccjU4EPJ.o
+ *fill*         0x0000000080002c9e        0x2 
+ .rodata        0x0000000080002ca0       0x2a /tmp/ccjU4EPJ.o
+ *fill*         0x0000000080002cca        0x6 
+ .rodata.str1.8
+                0x0000000080002cd0       0xdd /tmp/ccLD9Ili.o
+ *fill*         0x0000000080002dad        0x3 
+ .rodata        0x0000000080002db0       0x80 /tmp/ccLD9Ili.o
+ .rodata        0x0000000080002e30       0x18 /tmp/ccHWTZep.o
+ .rodata        0x0000000080002e48      0x1e0 /tmp/ccBH3LkY.o
+ .rodata.str1.8
+                0x0000000080003028       0x2a /tmp/ccx9ke4S.o
  *(.srodata*)
-                0x800041a4                        . = ALIGN (0x4)
-                0x800041a4                        _end_text = .
-                0x800041a4                        _stored_data = .
+                0x0000000080003054                . = ALIGN (0x4)
+ *fill*         0x0000000080003052        0x2 
+                0x0000000080003054                _end_text = .
+                0x0000000080003054                _stored_data = .
 
-.rela.dyn       0x800041a4        0x0
- .rela.init     0x800041a4        0x0 ./core_list_join.o
+.rela.dyn       0x0000000080003058        0x0
+ .rela.init     0x0000000080003058        0x0 /tmp/ccJg2Tca.o
 
-.data           0x10000000        0xc load address 0x800041a4
-                0x10000000                        __DATA_BEGIN__ = .
-                0x10000000                        _start_data = .
+.data           0x0000000010000000        0xc load address 0x0000000080003054
+                0x0000000010000000                __DATA_BEGIN__ = .
+                0x0000000010000000                _start_data = .
  *(.data .data.* .gnu.linkonce.d.*)
-                0x10000000                        __SDATA_BEGIN__ = .
+                0x0000000010000000                __SDATA_BEGIN__ = .
  *(.srodata.cst16)
  *(.srodata.cst8)
  *(.srodata.cst4)
  *(.srodata.cst2)
  *(.srodata .srodata.*)
  *(.sdata .sdata.* .sdata2.* .gnu.linkonce.s.*)
- .sdata         0x10000000        0xc ./nox/core_portme.o
-                0x10000000                default_num_contexts
-                0x10000004                seed4_volatile
-                0x10000008                seed3_volatile
-                0x1000000c                        _end_data = .
-                0x1000000c                        . = ALIGN ((. != 0x0)?0x4:0x1)
-                0x1000000c                        _start_bss = .
+ .sdata         0x0000000010000000        0xc /tmp/ccx9ke4S.o
+                0x0000000010000000                default_num_contexts
+                0x0000000010000004                seed4_volatile
+                0x0000000010000008                seed3_volatile
+                0x000000001000000c                _end_data = .
+                0x0000000010000010                . = ALIGN (0x8)
+                0x0000000010000010                _start_bss = .
 
-.bss            0x1000000c        0x0 load address 0x800041a4
-                0x1000000c                        __BSS_START__ = .
+.bss            0x000000001000000c        0x4 load address 0x0000000080003054
+                0x000000001000000c                __BSS_START__ = .
  *(.dynbss)
  *(.bss .bss.* .gnu.linkonce.b.*)
  *(COMMON)
-                0x1000000c                        . = ALIGN ((. != 0x0)?0x4:0x1)
+                0x0000000010000010                . = ALIGN (0x8)
+ *fill*         0x000000001000000c        0x4 
 
-.sbss           0x10000010       0x1c load address 0x800041a4
+.sbss           0x0000000010000010       0x1c load address 0x0000000080003054
  *(.dynsbss)
  *(.sbss .sbss.* .gnu.linkonce.sb.*)
- .sbss          0x10000010       0x1c ./nox/core_portme.o
-                0x10000020                seed5_volatile
-                0x10000024                seed2_volatile
-                0x10000028                seed1_volatile
+ .sbss          0x0000000010000010       0x1c /tmp/ccx9ke4S.o
+                0x0000000010000020                seed5_volatile
+                0x0000000010000024                seed2_volatile
+                0x0000000010000028                seed1_volatile
  *(.scommon)
-                0x1000002c                        __BSS_END__ = .
-                0x1000002c                        _end = .
-                0x1000002c                        _end_bss = .
-                0x10000800                        __global_pointer$ = MIN ((__SDATA_BEGIN__ + 0x800), MAX ((__DATA_BEGIN__ + 0x800), (__BSS_END__ - 0x800)))
-                0x10008000                        PROVIDE (_start_stack = (ORIGIN (DRAM) + LENGTH (DRAM)))
+                0x000000001000002c                __BSS_END__ = .
+                0x000000001000002c                _end = .
+                0x000000001000002c                _end_bss = .
+                0x0000000010000800                __global_pointer$ = MIN ((__SDATA_BEGIN__ + 0x800), MAX ((__DATA_BEGIN__ + 0x800), (__BSS_END__ - 0x800)))
+                0x0000000010008000                PROVIDE (_start_stack = (ORIGIN (DRAM) + LENGTH (DRAM)))
                 [!provide]                        PROVIDE (_end_stack = (ORIGIN (DRAM) + (LENGTH (DRAM) - _stack_size)))
                 [!provide]                        PROVIDE (_start_heap = __BSS_END__)
                 [!provide]                        PROVIDE (_end_heap = _end_stack)
                 [!provide]                        PROVIDE (end = _start_heap)
-OUTPUT(./coremark.elf elf32-littleriscv)
+OUTPUT(coremark.elf elf64-littleriscv)
 
-.debug_info     0x00000000     0x46f3
- .debug_info    0x00000000      0xe81 ./core_list_join.o
- .debug_info    0x00000e81      0xac7 ./core_main.o
- .debug_info    0x00001948      0xba8 ./core_matrix.o
- .debug_info    0x000024f0      0x4ae ./core_state.o
- .debug_info    0x0000299e      0x4fd ./core_util.o
- .debug_info    0x00002e9b      0xfc7 ./nox/printf.o
- .debug_info    0x00003e62      0x662 ./nox/core_portme.o
- .debug_info    0x000044c4       0x24 ./nox/crt0.o
- .debug_info    0x000044e8      0x20b ./nox/startup.o
+.debug_info     0x0000000000000000     0x475f
+ .debug_info    0x0000000000000000      0xe08 /tmp/ccJg2Tca.o
+ .debug_info    0x0000000000000e08      0xb72 /tmp/ccjU4EPJ.o
+ .debug_info    0x000000000000197a      0xb21 /tmp/cc2E2vEN.o
+ .debug_info    0x000000000000249b      0x516 /tmp/ccLD9Ili.o
+ .debug_info    0x00000000000029b1      0x60c /tmp/ccHWTZep.o
+ .debug_info    0x0000000000002fbd      0xffb /tmp/ccBH3LkY.o
+ .debug_info    0x0000000000003fb8      0x4ec /tmp/ccx9ke4S.o
+ .debug_info    0x00000000000044a4       0x2e /tmp/cc3ozKxk.o
+ .debug_info    0x00000000000044d2      0x28d /tmp/ccuesya7.o
 
-.debug_abbrev   0x00000000     0x1319
- .debug_abbrev  0x00000000      0x36c ./core_list_join.o
- .debug_abbrev  0x0000036c      0x1f0 ./core_main.o
- .debug_abbrev  0x0000055c      0x2af ./core_matrix.o
- .debug_abbrev  0x0000080b      0x251 ./core_state.o
- .debug_abbrev  0x00000a5c      0x203 ./core_util.o
- .debug_abbrev  0x00000c5f      0x36c ./nox/printf.o
- .debug_abbrev  0x00000fcb      0x24e ./nox/core_portme.o
- .debug_abbrev  0x00001219       0x14 ./nox/crt0.o
- .debug_abbrev  0x0000122d       0xec ./nox/startup.o
+.debug_abbrev   0x0000000000000000     0x10a4
+ .debug_abbrev  0x0000000000000000      0x30e /tmp/ccJg2Tca.o
+ .debug_abbrev  0x000000000000030e      0x191 /tmp/ccjU4EPJ.o
+ .debug_abbrev  0x000000000000049f      0x240 /tmp/cc2E2vEN.o
+ .debug_abbrev  0x00000000000006df      0x218 /tmp/ccLD9Ili.o
+ .debug_abbrev  0x00000000000008f7      0x18b /tmp/ccHWTZep.o
+ .debug_abbrev  0x0000000000000a82      0x319 /tmp/ccBH3LkY.o
+ .debug_abbrev  0x0000000000000d9b      0x1f3 /tmp/ccx9ke4S.o
+ .debug_abbrev  0x0000000000000f8e       0x14 /tmp/cc3ozKxk.o
+ .debug_abbrev  0x0000000000000fa2      0x102 /tmp/ccuesya7.o
 
-.debug_loclists
-                0x00000000     0x49ea
- .debug_loclists
-                0x00000000      0xeef ./core_list_join.o
- .debug_loclists
-                0x00000eef      0x4de ./core_main.o
- .debug_loclists
-                0x000013cd      0xeb4 ./core_matrix.o
- .debug_loclists
-                0x00002281      0x6a4 ./core_state.o
- .debug_loclists
-                0x00002925      0x35b ./core_util.o
- .debug_loclists
-                0x00002c80     0x1ba1 ./nox/printf.o
- .debug_loclists
-                0x00004821      0x150 ./nox/core_portme.o
- .debug_loclists
-                0x00004971       0x79 ./nox/startup.o
+.debug_loc      0x0000000000000000     0x89bf
+ .debug_loc     0x0000000000000000     0x1e93 /tmp/ccJg2Tca.o
+ .debug_loc     0x0000000000001e93      0x848 /tmp/ccjU4EPJ.o
+ .debug_loc     0x00000000000026db     0x1cb6 /tmp/cc2E2vEN.o
+ .debug_loc     0x0000000000004391      0xeb7 /tmp/ccLD9Ili.o
+ .debug_loc     0x0000000000005248      0xcc1 /tmp/ccHWTZep.o
+ .debug_loc     0x0000000000005f09     0x28b1 /tmp/ccBH3LkY.o
+ .debug_loc     0x00000000000087ba      0x195 /tmp/ccx9ke4S.o
+ .debug_loc     0x000000000000894f       0x70 /tmp/ccuesya7.o
 
-.debug_aranges  0x00000000      0x130
+.debug_aranges  0x0000000000000000      0x1d0
  .debug_aranges
-                0x00000000       0x20 ./core_list_join.o
+                0x0000000000000000       0x30 /tmp/ccJg2Tca.o
  .debug_aranges
-                0x00000020       0x28 ./core_main.o
+                0x0000000000000030       0x40 /tmp/ccjU4EPJ.o
  .debug_aranges
-                0x00000048       0x20 ./core_matrix.o
+                0x0000000000000070       0x30 /tmp/cc2E2vEN.o
  .debug_aranges
-                0x00000068       0x20 ./core_state.o
+                0x00000000000000a0       0x30 /tmp/ccLD9Ili.o
  .debug_aranges
-                0x00000088       0x20 ./core_util.o
+                0x00000000000000d0       0x30 /tmp/ccHWTZep.o
  .debug_aranges
-                0x000000a8       0x20 ./nox/printf.o
+                0x0000000000000100       0x30 /tmp/ccBH3LkY.o
  .debug_aranges
-                0x000000c8       0x20 ./nox/core_portme.o
+                0x0000000000000130       0x30 /tmp/ccx9ke4S.o
  .debug_aranges
-                0x000000e8       0x20 ./nox/crt0.o
+                0x0000000000000160       0x30 /tmp/cc3ozKxk.o
  .debug_aranges
-                0x00000108       0x28 ./nox/startup.o
+                0x0000000000000190       0x40 /tmp/ccuesya7.o
 
-.debug_rnglists
-                0x00000000      0x3af
- .debug_rnglists
-                0x00000000       0xe8 ./core_list_join.o
- .debug_rnglists
-                0x000000e8       0x32 ./core_main.o
- .debug_rnglists
-                0x0000011a       0x68 ./core_matrix.o
- .debug_rnglists
-                0x00000182       0x66 ./core_state.o
- .debug_rnglists
-                0x000001e8       0x38 ./core_util.o
- .debug_rnglists
-                0x00000220      0x175 ./nox/printf.o
- .debug_rnglists
-                0x00000395       0x1a ./nox/startup.o
+.debug_ranges   0x0000000000000000     0x10a0
+ .debug_ranges  0x0000000000000000      0x370 /tmp/ccJg2Tca.o
+ .debug_ranges  0x0000000000000370       0x80 /tmp/ccjU4EPJ.o
+ .debug_ranges  0x00000000000003f0      0x220 /tmp/cc2E2vEN.o
+ .debug_ranges  0x0000000000000610      0x280 /tmp/ccLD9Ili.o
+ .debug_ranges  0x0000000000000890      0x280 /tmp/ccHWTZep.o
+ .debug_ranges  0x0000000000000b10      0x560 /tmp/ccBH3LkY.o
+ .debug_ranges  0x0000000000001070       0x30 /tmp/ccuesya7.o
 
-.debug_line     0x00000000     0x653a
- .debug_line    0x00000000     0x13f5 ./core_list_join.o
- .debug_line    0x000013f5      0xc8b ./core_main.o
- .debug_line    0x00002080     0x11ed ./core_matrix.o
- .debug_line    0x0000326d      0xdad ./core_state.o
- .debug_line    0x0000401a      0x523 ./core_util.o
- .debug_line    0x0000453d     0x19e6 ./nox/printf.o
- .debug_line    0x00005f23      0x3dc ./nox/core_portme.o
- .debug_line    0x000062ff       0x5c ./nox/crt0.o
- .debug_line    0x0000635b      0x1df ./nox/startup.o
+.debug_line     0x0000000000000000     0x7175
+ .debug_line    0x0000000000000000     0x14fd /tmp/ccJg2Tca.o
+ .debug_line    0x00000000000014fd      0xfe1 /tmp/ccjU4EPJ.o
+ .debug_line    0x00000000000024de     0x1436 /tmp/cc2E2vEN.o
+ .debug_line    0x0000000000003914     0x10f7 /tmp/ccLD9Ili.o
+ .debug_line    0x0000000000004a0b      0x963 /tmp/ccHWTZep.o
+ .debug_line    0x000000000000536e     0x18de /tmp/ccBH3LkY.o
+ .debug_line    0x0000000000006c4c      0x279 /tmp/ccx9ke4S.o
+ .debug_line    0x0000000000006ec5       0x51 /tmp/cc3ozKxk.o
+ .debug_line    0x0000000000006f16      0x25f /tmp/ccuesya7.o
 
-.debug_str      0x00000000      0xad4
- .debug_str     0x00000000      0xad4 ./core_list_join.o
-                                0x3f6 (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./core_main.o
-                                0x39d (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./core_matrix.o
-                                0x1fa (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./core_state.o
-                                0x264 (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./core_util.o
-                                0x1af (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./nox/printf.o
-                                0x28b (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./nox/core_portme.o
-                                0x304 (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./nox/crt0.o
-                                 0x40 (size before relaxing)
- .debug_str     0x00000ad4        0x0 ./nox/startup.o
-                                0x1eb (size before relaxing)
+.debug_str      0x0000000000000000      0xaba
+ .debug_str     0x0000000000000000      0x3e1 /tmp/ccJg2Tca.o
+                                        0x432 (size before relaxing)
+ .debug_str     0x00000000000003e1      0x171 /tmp/ccjU4EPJ.o
+                                        0x3ca (size before relaxing)
+ .debug_str     0x0000000000000552       0xab /tmp/cc2E2vEN.o
+                                        0x233 (size before relaxing)
+ .debug_str     0x00000000000005fd      0x117 /tmp/ccLD9Ili.o
+                                        0x29c (size before relaxing)
+ .debug_str     0x0000000000000714       0x6a /tmp/ccHWTZep.o
+                                        0x1d9 (size before relaxing)
+ .debug_str     0x000000000000077e      0x165 /tmp/ccBH3LkY.o
+                                        0x2a6 (size before relaxing)
+ .debug_str     0x00000000000008e3       0xa7 /tmp/ccx9ke4S.o
+                                        0x2f4 (size before relaxing)
+ .debug_str     0x000000000000098a       0x17 /tmp/cc3ozKxk.o
+                                         0x2e (size before relaxing)
+ .debug_str     0x00000000000009a1      0x119 /tmp/ccuesya7.o
+                                        0x218 (size before relaxing)
 
-.debug_line_str
-                0x00000000      0x133
- .debug_line_str
-                0x00000000      0x133 ./core_list_join.o
-                                 0x57 (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./core_main.o
-                                 0x5b (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./core_matrix.o
-                                 0x54 (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./core_state.o
-                                 0x53 (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./core_util.o
-                                 0x50 (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./nox/printf.o
-                                 0xb8 (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./nox/core_portme.o
-                                 0xc9 (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./nox/crt0.o
-                                 0x34 (size before relaxing)
- .debug_line_str
-                0x00000133        0x0 ./nox/startup.o
-                                 0x9f (size before relaxing)
+.comment        0x0000000000000000       0x33
+ .comment       0x0000000000000000       0x33 /tmp/ccJg2Tca.o
+                                         0x34 (size before relaxing)
+ .comment       0x0000000000000033       0x34 /tmp/ccjU4EPJ.o
+ .comment       0x0000000000000033       0x34 /tmp/cc2E2vEN.o
+ .comment       0x0000000000000033       0x34 /tmp/ccLD9Ili.o
+ .comment       0x0000000000000033       0x34 /tmp/ccHWTZep.o
+ .comment       0x0000000000000033       0x34 /tmp/ccBH3LkY.o
+ .comment       0x0000000000000033       0x34 /tmp/ccx9ke4S.o
+ .comment       0x0000000000000033       0x34 /tmp/ccuesya7.o
+ .comment       0x0000000000000033       0x34 /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/../lib/gcc/riscv-none-embed/10.2.0/../../../../riscv-none-embed/lib/rv64imc_zba_zbb/lp64/libc_nano.a(lib_a-memcpy.o)
 
-.comment        0x00000000       0x33
- .comment       0x00000000       0x33 ./core_list_join.o
-                                 0x34 (size before relaxing)
- .comment       0x00000033        0x0 ./core_main.o
-                                 0x34 (size before relaxing)
- .comment       0x00000033        0x0 ./core_matrix.o
-                                 0x34 (size before relaxing)
- .comment       0x00000033        0x0 ./core_state.o
-                                 0x34 (size before relaxing)
- .comment       0x00000033        0x0 ./core_util.o
-                                 0x34 (size before relaxing)
- .comment       0x00000033        0x0 ./nox/printf.o
-                                 0x34 (size before relaxing)
- .comment       0x00000033        0x0 ./nox/core_portme.o
-                                 0x34 (size before relaxing)
- .comment       0x00000033        0x0 ./nox/startup.o
-                                 0x34 (size before relaxing)
-
-.note.GNU-stack
-                0x00000000        0x0
- .note.GNU-stack
-                0x00000000        0x0 ./core_list_join.o
- .note.GNU-stack
-                0x00000000        0x0 ./core_main.o
- .note.GNU-stack
-                0x00000000        0x0 ./core_matrix.o
- .note.GNU-stack
-                0x00000000        0x0 ./core_state.o
- .note.GNU-stack
-                0x00000000        0x0 ./core_util.o
- .note.GNU-stack
-                0x00000000        0x0 ./nox/printf.o
- .note.GNU-stack
-                0x00000000        0x0 ./nox/core_portme.o
- .note.GNU-stack
-                0x00000000        0x0 ./nox/startup.o
-
-.riscv.attributes
-                0x00000000       0x4f
- .riscv.attributes
-                0x00000000       0x42 ./core_list_join.o
- .riscv.attributes
-                0x00000042       0x42 ./core_main.o
- .riscv.attributes
-                0x00000084       0x42 ./core_matrix.o
- .riscv.attributes
-                0x000000c6       0x42 ./core_state.o
- .riscv.attributes
-                0x00000108       0x42 ./core_util.o
- .riscv.attributes
-                0x0000014a       0x42 ./nox/printf.o
- .riscv.attributes
-                0x0000018c       0x4f ./nox/core_portme.o
- .riscv.attributes
-                0x000001db       0x49 ./nox/crt0.o
- .riscv.attributes
-                0x00000224       0x4f ./nox/startup.o
-
-.debug_frame    0x00000000      0x700
- .debug_frame   0x00000000      0x158 ./core_list_join.o
- .debug_frame   0x00000158       0x94 ./core_main.o
- .debug_frame   0x000001ec      0x124 ./core_matrix.o
- .debug_frame   0x00000310       0x90 ./core_state.o
- .debug_frame   0x000003a0       0x70 ./core_util.o
- .debug_frame   0x00000410      0x1dc ./nox/printf.o
- .debug_frame   0x000005ec       0xb4 ./nox/core_portme.o
- .debug_frame   0x000006a0       0x60 ./nox/startup.o
+.debug_frame    0x0000000000000000      0x8b0
+ .debug_frame   0x0000000000000000      0x1e8 /tmp/ccJg2Tca.o
+ .debug_frame   0x00000000000001e8       0xa8 /tmp/ccjU4EPJ.o
+ .debug_frame   0x0000000000000290      0x148 /tmp/cc2E2vEN.o
+ .debug_frame   0x00000000000003d8       0xb0 /tmp/ccLD9Ili.o
+ .debug_frame   0x0000000000000488       0xa0 /tmp/ccHWTZep.o
+ .debug_frame   0x0000000000000528      0x208 /tmp/ccBH3LkY.o
+ .debug_frame   0x0000000000000730       0xf8 /tmp/ccx9ke4S.o
+ .debug_frame   0x0000000000000828       0x88 /tmp/ccuesya7.o

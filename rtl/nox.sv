@@ -3,12 +3,13 @@
  * License           : MIT license <Check LICENSE>
  * Author            : Anderson Ignacio da Silva (aignacio) <anderson@aignacio.com>
  * Date              : 16.10.2021
- * Last Modified Date: 02.07.2022
+ * Last Modified Date: 2026-04-01 (Phase 2C: Sv39 MMU inserted between pipeline and buses)
  */
 module nox
   import amba_axi_pkg::*;
   import amba_ahb_pkg::*;
   import nox_utils_pkg::*;
+  import mmu_pkg::*;
 #(
   parameter int SUPPORT_DEBUG         = 1,
   parameter int MTVEC_DEFAULT_VAL     = 'h1000, // 4KB
@@ -44,8 +45,13 @@ module nox
 );
   logic rst;
 
+  // Bus signals between cb_to_axi/ahb and MMU
   s_cb_mosi_t       instr_cb_mosi, lsu_cb_mosi;
   s_cb_miso_t       instr_cb_miso, lsu_cb_miso;
+
+  // Raw bus signals from fetch/LSU (VA, before MMU translation)
+  s_cb_mosi_t       fetch_raw_mosi, lsu_raw_mosi;
+  s_cb_miso_t       fetch_raw_miso, lsu_raw_miso;
 
   valid_t           fetch_valid;
   ready_t           fetch_ready;
@@ -81,7 +87,43 @@ module nox
   rdata_t           wb_fwd_load;
   logic             lock_wb;
   pc_t              lsu_pc;
+  pc_t              lsu_ap_pc;
   logic [1:0]       priv_mode;
+
+  // MMU control signals
+  logic [63:0]      satp;
+  logic             sum, mxr;
+  mmu_fault_t       mmu_fault;
+  logic             mmu_fault_valid;
+  logic             kill_lsu;
+  logic             sfence_vma;
+  logic [63:0]      sfence_vaddr, sfence_asid;
+  logic             sfence_rs1_x0, sfence_rs2_x0;
+
+  // Register sfence signals by 1 cycle to break the combinational feedback
+  // path through the MMU (sfence_vma_o → MMU → lsu_raw_miso → lsu_bp →
+  // execute → sfence_vma_o). Functionally correct: the pipeline flush from
+  // fetch_req_o fires the same cycle as sfence.vma, and TLB invalidation
+  // on the following edge is safe because no new instructions are in flight.
+  logic             sfence_vma_r;
+  logic [63:0]      sfence_vaddr_r, sfence_asid_r;
+  logic             sfence_rs1_x0_r, sfence_rs2_x0_r;
+  `CLK_PROC(clk, rst) begin
+    `RST_TYPE(rst) begin
+      sfence_vma_r     <= 1'b0;
+      sfence_vaddr_r   <= '0;
+      sfence_asid_r    <= '0;
+      sfence_rs1_x0_r  <= 1'b0;
+      sfence_rs2_x0_r  <= 1'b0;
+    end
+    else begin
+      sfence_vma_r     <= sfence_vma;
+      sfence_vaddr_r   <= sfence_vaddr;
+      sfence_asid_r    <= sfence_asid;
+      sfence_rs1_x0_r  <= sfence_rs1_x0;
+      sfence_rs2_x0_r  <= sfence_rs2_x0;
+    end
+  end
 
 `ifdef TARGET_FPGA
   reset_sync#(
@@ -100,10 +142,8 @@ module nox
     .AXI_ID                (FETCH_IF_ID)
   ) u_instr_cb_to_axi(
     .clk                   (clk),
-    // Core bus Master I/F
     .cb_mosi_i             (instr_cb_mosi),
     .cb_miso_o             (instr_cb_miso),
-    // AXI Master I/F
     .axi_mosi_o            (instr_axi_mosi_o),
     .axi_miso_i            (instr_axi_miso_i)
   );
@@ -112,32 +152,57 @@ module nox
     .AXI_ID                (LSU_IF_ID)
   ) u_lsu_cb_to_axi(
     .clk                   (clk),
-    // Core bus Master I/F
     .cb_mosi_i             (lsu_cb_mosi),
     .cb_miso_o             (lsu_cb_miso),
-    // AXI Master I/F
     .axi_mosi_o            (lsu_axi_mosi_o),
     .axi_miso_i            (lsu_axi_miso_i)
   );
 `else
   cb_to_ahb u_instr_cb_to_ahb(
-    // Core bus Master I/F
     .cb_mosi_i             (instr_cb_mosi),
     .cb_miso_o             (instr_cb_miso),
-    // AHB Master I/F
     .ahb_mosi_o            (instr_ahb_mosi_o),
     .ahb_miso_i            (instr_ahb_miso_i)
   );
 
   cb_to_ahb u_lsu_cb_to_ahb(
-    // Core bus Master I/F
     .cb_mosi_i             (lsu_cb_mosi),
     .cb_miso_o             (lsu_cb_miso),
-    // AHB Master I/F
     .ahb_mosi_o            (lsu_ahb_mosi_o),
     .ahb_miso_i            (lsu_ahb_miso_i)
   );
 `endif
+
+  // ---- MMU: Sv39 address translation shim ----
+  mmu u_mmu (
+    .clk              (clk),
+    .rst              (rst),
+    // Control
+    .satp_i           (satp),
+    .priv_i           (priv_mode),
+    .mxr_i            (mxr),
+    .sum_i            (sum),
+    // SFENCE.VMA (registered to break combinational loop through MMU)
+    .sfence_i         (sfence_vma_r),
+    .sfence_vaddr_i   (sfence_vaddr_r),
+    .sfence_asid_i    (sfence_asid_r),
+    .sfence_rs1_x0_i  (sfence_rs1_x0_r),
+    .sfence_rs2_x0_i  (sfence_rs2_x0_r),
+    // Fetch path
+    .fetch_mosi_i     (fetch_raw_mosi),
+    .fetch_miso_o     (fetch_raw_miso),
+    .instr_mosi_o     (instr_cb_mosi),
+    .instr_miso_i     (instr_cb_miso),
+    // Data path
+    .lsu_mosi_i       (lsu_raw_mosi),
+    .lsu_miso_o       (lsu_raw_miso),
+    .data_mosi_o      (lsu_cb_mosi),
+    .data_miso_i      (lsu_cb_miso),
+    // Kill LSU + page fault
+    .kill_lsu_o       (kill_lsu),
+    .mmu_fault_o      (mmu_fault),
+    .mmu_fault_valid_o (mmu_fault_valid)
+  );
 
   fetch #(
     .SUPPORT_DEBUG         (SUPPORT_DEBUG),
@@ -145,9 +210,9 @@ module nox
   ) u_fetch (
     .clk                   (clk),
     .rst                   (rst),
-    // Core bus fetch I/F
-    .instr_cb_mosi_o       (instr_cb_mosi),
-    .instr_cb_miso_i       (instr_cb_miso),
+    // Core bus fetch I/F (VA; MMU translates to PA)
+    .instr_cb_mosi_o       (fetch_raw_mosi),
+    .instr_cb_miso_i       (fetch_raw_miso),
     // Start I/F
     .fetch_start_i         (start_fetch_i),
     .fetch_start_addr_i    (start_addr_i),
@@ -225,6 +290,7 @@ module nox
     .lsu_o                 (lsu_op),
     .lsu_bp_i              (lsu_bp),
     .lsu_pc_i              (lsu_pc),
+    .lsu_ap_pc_i           (lsu_ap_pc),
     // IRQs
     .irq_i                 (irq_i),
     // To FETCH stg
@@ -242,10 +308,23 @@ module nox
     .bp_is_call_o          (bp_is_call),
     .bp_call_ret_addr_o    (bp_call_ret_addr),
     .bp_is_return_o        (bp_is_return),
-    // From diff stgs
+    // Trap signals
     .fetch_trap_i          (fetch_trap),
     .lsu_trap_i            (lsu_trap),
-    .priv_mode_o           (priv_mode)
+    // MMU fault
+    .mmu_fault_i           (mmu_fault),
+    .mmu_fault_valid_i     (mmu_fault_valid),
+    // Privilege + MMU control
+    .priv_mode_o           (priv_mode),
+    .satp_o                (satp),
+    .sum_o                 (sum),
+    .mxr_o                 (mxr),
+    // SFENCE.VMA to MMU
+    .sfence_vma_o          (sfence_vma),
+    .sfence_vaddr_o        (sfence_vaddr),
+    .sfence_asid_o         (sfence_asid),
+    .sfence_rs1_x0_o       (sfence_rs1_x0),
+    .sfence_rs2_x0_o       (sfence_rs2_x0)
   );
 
   lsu #(
@@ -260,15 +339,18 @@ module nox
     // To EXE stg
     .lsu_bp_o              (lsu_bp),
     .lsu_pc_o              (lsu_pc),
+    .lsu_ap_pc_o           (lsu_ap_pc),
     // To write-back datapath
     .lsu_bp_data_o         (lsu_bp_data),
     .wb_lsu_o              (lsu_op_wb),
     .lsu_data_o            (lsu_rd_data),
-    // Core data bus I/F
-    .data_cb_mosi_o        (lsu_cb_mosi),
-    .data_cb_miso_i        (lsu_cb_miso),
+    // Core data bus I/F (VA; MMU translates to PA)
+    .data_cb_mosi_o        (lsu_raw_mosi),
+    .data_cb_miso_i        (lsu_raw_miso),
     // Trap - MEM access fault or MEM misaligned addr
-    .lsu_trap_o            (lsu_trap)
+    .lsu_trap_o            (lsu_trap),
+    // MMU kill (page fault drain)
+    .kill_lsu_i            (kill_lsu)
   );
 
   wb u_wb(
@@ -281,6 +363,8 @@ module nox
     .lsu_rd_data_i         (lsu_rd_data),
     .lsu_bp_i              (lsu_bp),
     .lsu_bp_data_i         (lsu_bp_data),
+    // MMU fault
+    .mmu_fault_valid_i     (mmu_fault_valid),
     // To DEC stg
     .wb_dec_o              (wb_dec),
     // To EXE stg
