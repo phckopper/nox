@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# NoX platform Kconfig — pull in only the drivers we use
+
+config PLATFORM_NOX
+	bool
+	select SERIAL_UART8250
+	select IPI_MSWI
+	select TIMER_MTIMER
+	select IRQCHIP_PLIC
+	default y

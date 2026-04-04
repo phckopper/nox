@@ -461,7 +461,7 @@ Start with v1 architecture, widen to 64 bits.
 ---
 
 ### Phase 2: Privilege + MMU (Linux prerequisite)
-**Estimated complexity: HIGH** — **COMPLETE (2026-04-03)**
+**Estimated complexity: HIGH** — **2A/2B/2C COMPLETE; 2D IN PROGRESS (2026-04-04)**
 
 - [x] Add S-mode and U-mode privilege levels
 - [x] Implement `medeleg` / `mideleg` delegation
@@ -470,11 +470,25 @@ Start with v1 architecture, widen to 64 bits.
 - [x] Implement hardware Page Table Walker
 - [x] Add `SFENCE.VMA` and `FENCE.I`
 - [x] Connect timer (CLINT) and external interrupt (PLIC stub)
+- [x] Linux testbench (`tb/nox_sim_linux.sv`): unified 64 MB dual-port memory, NS16550A UART
+- [x] OpenSBI minimal `nox` platform (`sw/opensbi/platform/nox/`) — 133 KB binary
+- [x] Linux v6.6 kernel with embedded BusyBox 1.36.1 initramfs (`sw/linux/`, `sw/busybox/`)
+- [x] Device tree (`sw/nox.dts` / `sw/nox.dtb`) and boot script (`sw/run_linux.sh`)
+- [ ] **First boot run** — Linux kernel to BusyBox `/bin/sh` (acceptance gate)
 
-**Test:** `sw/mmu_test/mmu_test.elf` — gigapage identity map, D-TLB store/load, load page fault
-trap+MRET, SFENCE.VMA. **Prints PASS.**
+**Sub-phase tests:**
+- `sw/priv_test/priv_test.elf` — ECALL delegation → S-mode → SRET. **Prints PASS.**
+- `sw/clint_test/clint_test.elf` — timer IRQ, SW IRQ (MSIP), PLIC readback. **All PASS.**
+- `sw/mmu_test/mmu_test.elf` — gigapage identity map, D-TLB store/load, load page fault
+  trap+MRET, SFENCE.VMA. **Prints PASS.**
 
-**Next acceptance gate:** Linux boot to BusyBox shell (Phase 2D).
+**Boot command:**
+```bash
+make linux_sim WAVEFORM_USE=0 OUT_LINUX=output_linux_sim
+./sw/run_linux.sh
+```
+
+**Acceptance gate:** Linux kernel boots to BusyBox shell (`cat /proc/cpuinfo` works).
 
 ---
 
@@ -548,9 +562,9 @@ This is the major performance multiplier. Best approached iteratively:
 |---|---|---|---|
 | 64-bit widening | MEDIUM | LOW | Mechanical widening of v1; well-understood |
 | C extension expander | MEDIUM | LOW | Pure combinational mapping; well-specified |
-| Privilege (M+S+U) | MEDIUM | MEDIUM | CSR interactions subtle; Linux boot as gate |
-| Sv39 TLBs | MEDIUM | MEDIUM | Correctness-critical; use riscv-tests vectors |
-| Page Table Walker | MEDIUM-HIGH | MEDIUM | Corner cases: misaligned PTE, A/D bits, hugepages |
+| Privilege (M+S+U) | MEDIUM | ~~MEDIUM~~ **DONE** | CSR interactions subtle; Linux boot as gate |
+| Sv39 TLBs | MEDIUM | ~~MEDIUM~~ **DONE** | Correctness-critical; use riscv-tests vectors |
+| Page Table Walker | MEDIUM-HIGH | ~~MEDIUM~~ **DONE** | Corner cases: misaligned PTE, A/D bits, hugepages |
 | L1/L2 caches | MEDIUM-HIGH | LOW | Well-understood; start with direct-mapped |
 | FPU | MEDIUM | LOW | IEEE 754 compliance tools available (TestFloat) |
 | 2-wide superscalar (in-order) | MEDIUM | LOW | Limited new hazard cases |

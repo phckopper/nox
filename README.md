@@ -13,6 +13,7 @@
 * [FreeRTOS](#freertos)
 * [Compliance Tests](#compliance)
 * [CoreMark](#coremark)
+* [Linux Boot](#linux)
 * [Synthesis](#synth)
 * [License](#lic)
 
@@ -29,8 +30,9 @@ NoX is a RISC-V core designed in System Verilog language aiming both `FPGA` and 
 - 128-entry BTB + 256-entry XOR-folded BHT + 4-entry RAS branch predictor
 - AXI4 or AHB I/F
 
-> **Status (2026-04-03):** Phase 2 (privilege + MMU) complete. `mmu_test` passes Sv39
-> store/load round-trip, page fault handling, and SFENCE.VMA. Next: Linux boot (Phase 2D).
+> **Status (2026-04-04):** Phase 2D (Linux boot) in progress. All software artifacts are built —
+> OpenSBI 133 KB minimal platform, Linux v6.6 kernel with embedded BusyBox initramfs, NS16550
+> UART, dual-port unified memory testbench. Awaiting first Verilator boot run.
 
 The CSRs that are implemented in the core are listed down below, more CSRs can be easily integrated within [rtl/csr.sv](rtl/csr.sv) by extending the decoder. Instructions such as `ECALL/EBREAK` are supported as well and will synchronously trap the core, forcing a jump to the `MTVEC` value. All interrupts will redirect the core to the `MTVEC` as well as it is considered asynchronous traps.
 
@@ -259,6 +261,54 @@ Correct operation validated. See README.md for run and reporting rules.
 CoreMark/MHz = 1,500 × 50,000,000 / 518,472,885 = **2.893 CM/MHz** at 50 MHz (+16.7% vs RV32IM baseline of 2.479).
 
 > **Tag:** [`nox-turbo`](../../releases/tag/nox-turbo) — snapshot of this result (128-entry BTB + full Zbb, 2026-03-26).
+
+## <a name="linux"></a> Linux Boot (Phase 2D)
+
+NoX supports running Linux via Verilator simulation using a unified testbench
+([`tb/nox_sim_linux.sv`](tb/nox_sim_linux.sv)) with a 64 MB dual-port memory, NS16550A
+UART, CLINT, and PLIC.
+
+**Boot flow:**
+```
+NoX (0x80000000)  →  OpenSBI fw_jump (M-mode firmware)
+                  →  Linux v6.6 kernel @ 0x80200000 (S-mode)
+                  →  BusyBox initramfs → /bin/sh
+```
+
+**Build the Linux simulator:**
+```bash
+docker rm -f ship_nox 2>/dev/null
+make linux_sim WAVEFORM_USE=0 OUT_LINUX=output_linux_sim
+```
+
+**Build software (host tools required: `gcc-riscv64-linux-gnu`, `dtc`):**
+```bash
+# OpenSBI (minimal nox platform, ~133 KB)
+cd sw/opensbi && make CROSS_COMPILE=riscv64-linux-gnu- PLATFORM=nox -j$(nproc)
+
+# Linux kernel v6.6 with embedded BusyBox initramfs
+cd sw/linux && make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j$(nproc)
+
+# Device tree
+dtc -I dts -O dtb -o sw/nox.dtb sw/nox.dts
+```
+
+**Run:**
+```bash
+./sw/run_linux.sh          # 500M cycle default
+./sw/run_linux.sh -s 1000000000  # extend if boot stalls
+```
+
+**Linux testbench memory map:**
+
+| Address | Peripheral |
+|---|---|
+| `0x0200_0000` | CLINT (mtime / mtimecmp / msip) |
+| `0x0C00_0000` | PLIC stub (1 source, M+S contexts) |
+| `0x1000_0000` | NS16550A UART (byte-width, stdout intercept) |
+| `0x8000_0000` | 64 MB unified main memory (dual-port AXI) |
+
+---
 
 ## <a name="synth"></a> Synthesis
 

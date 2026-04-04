@@ -1,0 +1,14 @@
+#!/bin/sh
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev 2>/dev/null || true
+
+echo ""
+echo "========================================="
+echo "  NoX RV64 Linux Boot SUCCESS"
+echo "========================================="
+echo ""
+
+cat /proc/cpuinfo
+
+exec /bin/sh

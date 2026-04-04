@@ -64,6 +64,10 @@ DRAM_KB_SIZE	?=	32
 ENTRY_ADDR		?=	\'h0000_0000_8000_0000
 IRAM_ADDR			?=	0x80000000
 DRAM_ADDR			?=	0x10000000
+
+# Linux-mode simulation parameters (Phase 2D)
+MAIN_MEM_KB_SIZE	?=	65536		# 64 MB unified main memory
+# MAIN_MEM_ADDR reuses IRAM_ADDR (0x80000000)
 # For NoX SoC
 IRAM_ADDR_SOC	?=	0xa0000000
 DRAM_ADDR_SOC	?=	0x10000000
@@ -76,12 +80,16 @@ WAVEFORM_FST	?=	nox_waves.fst
 OUT_VERILATOR	:=	output_verilator
 ROOT_MOD_VERI	:=	nox_sim
 ROOT_MOD_SOC	:=	nox_soc
+ROOT_MOD_LINUX	:=	nox_sim_linux
 VERILATOR_EXE	:=	$(OUT_VERILATOR)/$(ROOT_MOD_VERI)
 VERI_EXE_SOC	:=	$(OUT_VERILATOR)/$(ROOT_MOD_SOC)
+OUT_LINUX			?=	output_linux_sim
+VERI_EXE_LINUX	:=	$(OUT_LINUX)/$(ROOT_MOD_LINUX)
 
 # Testbench files
 SRC_CPP				:=	$(wildcard $(VERILATOR_TB)/cpp/testbench.cpp)
 SRC_CPP_SOC		:=	$(wildcard $(VERILATOR_TB)/cpp/testbench_soc.cpp)
+SRC_CPP_LINUX	:=	$(wildcard $(VERILATOR_TB)/cpp/testbench_linux.cpp)
 _INC_CPPS			:=	../tb/cpp/elfio
 _INC_CPPS			+=	../tb/cpp/inc
 INCS_CPP			:=	$(addprefix -I,$(_INC_CPPS))
@@ -168,7 +176,37 @@ VERIL_ARGS_SOC	:=	-CFLAGS $(CPPFLAGS_SOC) 			\
 										-o 														\
 										$(ROOT_MOD_SOC)
 
-.PHONY: verilator clean help
+# Linux-mode Verilator build flags
+_MACROS_LINUX	:=	MAIN_MEM_KB_SIZE=$(MAIN_MEM_KB_SIZE)
+_MACROS_LINUX	+=	ENTRY_ADDR=$(ENTRY_ADDR)
+_MACROS_LINUX	+=	DISPLAY_TEST=$(DISPLAY_TEST)
+_MACROS_LINUX	+=	SIMULATION
+_MACROS_LINUX	+=	EN_PRINTF
+_MACROS_LINUX	+=	TARGET_IF_AXI
+MACROS_LINUX	:=	$(addprefix +define+,$(_MACROS_LINUX))
+
+CPPFLAGS_LINUX	:=	"$(INCS_CPP) -O3 -Wall					\
+									-Werror -Wno-maybe-uninitialized		\
+									-DMAIN_MEM_KB_SIZE=\"$(MAIN_MEM_KB_SIZE)\"	\
+									-DMAIN_MEM_ADDR=\"$(IRAM_ADDR)\"		\
+									-DWAVEFORM_USE=\"$(WAVEFORM_USE)\"	\
+									-DWAVEFORM_FST=\"$(WAVEFORM_FST)\""
+
+# Exclude the non-Linux testbench top (nox_sim.sv uses IRAM_KB_SIZE/DRAM_KB_SIZE)
+SRC_VERILOG_LINUX	:=	$(filter-out tb/nox_sim.sv, $(SRC_VERILOG))
+
+VERIL_ARGS_LINUX	:=	-CFLAGS $(CPPFLAGS_LINUX)		\
+										-j 8								\
+										--top-module $(ROOT_MOD_LINUX)	\
+										--Mdir $(OUT_LINUX)				\
+										-f verilator.flags				\
+										$(INCS_VLOG)					\
+										$(MACROS_LINUX)					\
+										$(SRC_VERILOG_LINUX)			\
+										$(SRC_CPP_LINUX)				\
+										-o $(ROOT_MOD_LINUX)
+
+.PHONY: verilator clean help linux_sim clean_linux
 help:
 	@echo "Targets:"
 	@echo "lint	   - calls verilator sv linting"
@@ -178,6 +216,8 @@ help:
 	@echo "soc	   - build design a simple NoX SoC through verilator"
 	@echo "run_soc	   - run sw/soc_hello_world app through nox_sim"
 	@echo "wave_soc   - calls gtkwave for SoC sims"
+	@echo "linux_sim  - build Phase 2D Linux-mode simulator (nox_sim_linux)"
+	@echo "clean_linux - clean Linux-mode output dir"
 	@echo "build_comp - Build NoX for running compliance tests"
 	@echo "run_comp   - Run compliance tests"
 	@echo "conv_verilog - Convert NoX core from system verilog to verilog"
@@ -220,6 +260,25 @@ $(VERILATOR_EXE): $(OUT_VERILATOR)/V$(ROOT_MOD_VERI).mk
 
 $(OUT_VERILATOR)/V$(ROOT_MOD_VERI).mk: $(SRC_VERILOG) $(SRC_CPP) $(TB_VERILATOR)
 	$(RUN_CMD) verilator $(VERIL_ARGS)
+
+##########################
+#      Linux sim (2D)    #
+##########################
+clean_linux:
+	rm -rf $(OUT_LINUX)
+
+$(VERI_EXE_LINUX): $(OUT_LINUX)/V$(ROOT_MOD_LINUX).mk
+	$(RUN_CMD) make -C $(OUT_LINUX) -f V$(ROOT_MOD_LINUX).mk $(ROOT_MOD_LINUX)
+
+$(OUT_LINUX)/V$(ROOT_MOD_LINUX).mk: $(SRC_VERILOG) $(SRC_CPP_LINUX)
+	mkdir -p $(OUT_LINUX)
+	$(RUN_CMD) verilator $(VERIL_ARGS_LINUX)
+
+linux_sim: clean_linux $(VERI_EXE_LINUX)
+	@echo "\n"
+	@echo "Linux simulator built:"
+	@echo "  $(VERI_EXE_LINUX) -e <opensbi.elf> [-b 0x80200000:Image] [-b 0x87f00000:nox.dtb]"
+	@echo "\n"
 
 ##########################
 #				 Coremark			   #
