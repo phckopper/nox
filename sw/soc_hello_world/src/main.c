@@ -9,8 +9,9 @@
 #define FREQ_SYSTEM 50000000
 #define BR_UART     115200
 
-//#define REAL_UART
-#define LCD_EN
+#define REAL_UART
+//#define UART_SIM
+//#define LCD_EN
 
 #define ERR_CFG     0xFFFF0000
 #define PRINT_ADDR  0xD0000008
@@ -101,7 +102,7 @@ void irq_timer_callback(void){
     *addr_leds = ~gLEDsAddr;
   }
   sprintf(str, "%u", gCounter++);
-  ILI9341_Draw_Text(str, 10, 110, WHITE, 2, BLACK);
+  ///ILI9341_Draw_Text(str, 10, 110, WHITE, 2, BLACK);
 }
 
 int main(void) {
@@ -119,7 +120,7 @@ int main(void) {
   *mtimer_cmp = mtime_half_second;
 
   while(1){
-    /*printf("\n\rMtimer: %d",*mtimer);*/
+    printf("\n\rMtimer: %d",*mtimer);
     wfi();
   }
 #else

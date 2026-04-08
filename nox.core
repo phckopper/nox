@@ -24,6 +24,8 @@ filesets:
       - rtl/lsu.sv
       - rtl/skid_buffer.sv
       - rtl/decode.sv
+      - rtl/branch_predictor.sv
+      - rtl/muldiv_unit.sv
     file_type: systemVerilogSource
 
   uart_axi:
@@ -132,6 +134,10 @@ filesets:
     files:
       - xlnx/xdc/kintex7_qmtech.xdc: {file_type: xdc}
 
+  k7_chinese_constraints:
+    files:
+      - xlnx/xdc/kintex7_chinese.xdc: {file_type: xdc}
+
   kc705_constraints:
     files:
       - xlnx/xdc/kc705.xdc: {file_type: xdc}
@@ -158,6 +164,14 @@ parameters:
     default : true
     paramtype: vlogdefine
   KC705_KINTEX_7_100MHz:
+    datatype: bool
+    default : true
+    paramtype: vlogdefine
+  CHINESE_KINTEX_7_100MHz:
+    datatype: bool
+    default : true
+    paramtype: vlogdefine
+  CHINESE_KINTEX_7_50MHz:
     datatype: bool
     default : true
     paramtype: vlogdefine
@@ -202,6 +216,36 @@ targets:
     filesets_append:
       - synth_nox
       - k7_qmtech_constraints
+      - files_tcl
+    tools:
+      vivado:
+        part : xc7k325tffg676-1
+    toplevel: nox_soc
+
+  k7_chinese_synth:
+    <<: *default
+    default_tool : vivado
+    parameters:
+      - CHINESE_KINTEX_7_100MHz
+    description : Chinese Kintex 7 board synthesis @ 100MHz
+    filesets_append:
+      - synth_nox
+      - k7_chinese_constraints
+      - files_tcl
+    tools:
+      vivado:
+        part : xc7k325tffg676-1
+    toplevel: nox_soc
+
+  k7_chinese_synth_50:
+    <<: *default
+    default_tool : vivado
+    parameters:
+      - CHINESE_KINTEX_7_50MHz
+    description : Chinese Kintex 7 board synthesis @ 50MHz
+    filesets_append:
+      - synth_nox
+      - k7_chinese_constraints
       - files_tcl
     tools:
       vivado:

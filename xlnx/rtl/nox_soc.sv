@@ -75,6 +75,18 @@ module nox_soc
   assign clk_locked_o = start_fetch;
 `endif
 
+`ifdef CHINESE_KINTEX_7_100MHz
+  assign bootloader_int = bootloader_i;
+  assign rst = rst_cpu;
+  assign clk_locked_o = start_fetch;
+`endif
+
+`ifdef CHINESE_KINTEX_7_50MHz
+  assign bootloader_int = bootloader_i;
+  assign rst = rst_cpu;
+  assign clk_locked_o = start_fetch;
+`endif
+
   clk_mgmt u_clk_mgmt(
 `ifdef KC705_KINTEX_7_100MHz
     .clk_in_p   (clk_in_p),

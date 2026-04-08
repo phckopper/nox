@@ -89,6 +89,122 @@ module clk_mgmt(
 
 `endif
 
+`ifdef CHINESE_KINTEX_7_100MHz
+  logic        clkfbout_clk_wiz_2;
+  logic        clkfbout_buf_clk_wiz_2;
+  logic        clk_out_clk_wiz_2;
+
+  // 100 MHz in -> 100 MHz out: MULT=10, DIV=1, CLKOUT0_DIV=10
+  PLLE2_ADV#(
+    .BANDWIDTH            ("OPTIMIZED"),
+    .COMPENSATION         ("ZHOLD"),
+    .STARTUP_WAIT         ("FALSE"),
+    .DIVCLK_DIVIDE        (1),
+    .CLKFBOUT_MULT        (10),
+    .CLKFBOUT_PHASE       (0.000),
+    .CLKOUT0_DIVIDE       (10),
+    .CLKOUT0_PHASE        (0.000),
+    .CLKOUT0_DUTY_CYCLE   (0.500),
+    .CLKIN1_PERIOD        (10.000)
+  ) plle2_adv_inst (
+    .CLKFBOUT            (clkfbout_clk_wiz_2),
+    .CLKOUT0             (clk_out_clk_wiz_2),
+    .CLKOUT1             (),
+    .CLKOUT2             (),
+    .CLKOUT3             (),
+    .CLKOUT4             (),
+    .CLKOUT5             (),
+    .CLKFBIN             (clkfbout_buf_clk_wiz_2),
+    .CLKIN1              (clk_in_clk_wiz_2),
+    .CLKIN2              (1'b0),
+    .CLKINSEL            (1'b1),
+    .DADDR               (7'h0),
+    .DCLK                (1'b0),
+    .DEN                 (1'b0),
+    .DI                  (16'h0),
+    .DO                  (),
+    .DRDY                (),
+    .DWE                 (1'b0),
+    .LOCKED              (clk_locked),
+    .PWRDWN              (1'b0),
+    .RST                 ('b0)
+    //.RST                 (rst_in)
+  );
+
+  IBUF clkin1_ibufg(
+    .O (clk_in_clk_wiz_2),
+    .I (clk_in)
+  );
+
+  BUFG clkf_buf(
+    .O (clkfbout_buf_clk_wiz_2),
+    .I (clkfbout_clk_wiz_2)
+  );
+
+  BUFG clkout1_buf(
+    .O (clk_out),
+    .I (clk_out_clk_wiz_2)
+  );
+`endif
+
+`ifdef CHINESE_KINTEX_7_50MHz
+  logic        clkfbout_clk_wiz_2;
+  logic        clkfbout_buf_clk_wiz_2;
+  logic        clk_out_clk_wiz_2;
+
+  // 100 MHz in -> 50 MHz out: MULT=10, DIV=1, CLKOUT0_DIV=20
+  PLLE2_ADV#(
+    .BANDWIDTH            ("OPTIMIZED"),
+    .COMPENSATION         ("ZHOLD"),
+    .STARTUP_WAIT         ("FALSE"),
+    .DIVCLK_DIVIDE        (1),
+    .CLKFBOUT_MULT        (10),
+    .CLKFBOUT_PHASE       (0.000),
+    .CLKOUT0_DIVIDE       (20),
+    .CLKOUT0_PHASE        (0.000),
+    .CLKOUT0_DUTY_CYCLE   (0.500),
+    .CLKIN1_PERIOD        (10.000)
+  ) plle2_adv_inst (
+    .CLKFBOUT            (clkfbout_clk_wiz_2),
+    .CLKOUT0             (clk_out_clk_wiz_2),
+    .CLKOUT1             (),
+    .CLKOUT2             (),
+    .CLKOUT3             (),
+    .CLKOUT4             (),
+    .CLKOUT5             (),
+    .CLKFBIN             (clkfbout_buf_clk_wiz_2),
+    .CLKIN1              (clk_in_clk_wiz_2),
+    .CLKIN2              (1'b0),
+    .CLKINSEL            (1'b1),
+    .DADDR               (7'h0),
+    .DCLK                (1'b0),
+    .DEN                 (1'b0),
+    .DI                  (16'h0),
+    .DO                  (),
+    .DRDY                (),
+    .DWE                 (1'b0),
+    .LOCKED              (clk_locked),
+    .PWRDWN              (1'b0),
+    .RST                 ('b0)
+    //.RST                 (rst_in)
+  );
+
+  IBUF clkin1_ibufg(
+    .O (clk_in_clk_wiz_2),
+    .I (clk_in)
+  );
+
+  BUFG clkf_buf(
+    .O (clkfbout_buf_clk_wiz_2),
+    .I (clkfbout_clk_wiz_2)
+  );
+
+  BUFG clkout1_buf(
+    .O (clk_out),
+    .I (clk_out_clk_wiz_2)
+  );
+`endif
+
 `ifdef QMTECH_KINTEX_7_100MHz
   logic        clkfbout_clk_wiz_2;
   logic        clkfbout_buf_clk_wiz_2;

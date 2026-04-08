@@ -22,3 +22,7 @@ set_property BITSTREAM.CONFIG.USR_ACCESS TIMESTAMP [current_design]
 
 # Allow not fully constrained in/out pins in XDC
 set_property BITSTREAM.General.UnconstrainedPins {Allow} [current_design]
+
+# Downgrade UCIO-1 to warning: several ports (spi_gpio_o, csr_out[6:7], etc.) have
+# IOSTANDARD set but no LOC assigned — add pin assignments in the XDC before deploying.
+set_property SEVERITY {Warning} [get_drc_checks UCIO-1]

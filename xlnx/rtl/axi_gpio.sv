@@ -40,7 +40,7 @@ module axi_gpio
     axi_miso.awready = 'b1;
     axi_miso.arready = 'b1;
 
-    csr_o = csr_output_ff;
+    csr_o = ~csr_output_ff;
     next_dec_csr = csr_decode_ff;
     next_csr = csr_output_ff;
     next_bvalid = bvalid_ff;
