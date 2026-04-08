@@ -6,28 +6,22 @@ RUN apt-get install git file gcc make time wget zip -y
 RUN apt install device-tree-compiler -y
 # RISC-V Toolchain
 WORKDIR /opt/
-RUN wget -c https://github.com/xpack-dev-tools/riscv-none-embed-gcc-xpack/releases/download/v10.2.0-1.2/xpack-riscv-none-embed-gcc-10.2.0-1.2-linux-x64.tar.gz -O - | tar -xz
-RUN ln -s /opt/xpack-riscv-none-embed-gcc-10.2.0-1.2/bin/riscv* /usr/bin
+RUN wget -c https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v15.2.0-1/xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz -O - | tar -xz
+RUN ln -s /opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv* /usr/bin
 
 # RISCOF
 RUN apt-get install python3-pip -y
-RUN pip3 install riscof
+RUN pip3 install riscof --break-system-packages
 
 # SAIL C-emulator
 ENV TZ=Europe/Dublin
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-RUN apt-get install opam build-essential libgmp-dev z3 pkg-config zlib1g-dev -y
-RUN opam init -y --disable-sandboxing
-RUN opam switch create ocaml-base-compiler.4.06.1
-RUN opam install sail -y
-RUN eval $(opam config env)
-RUN /bin/bash /root/.bashrc
-RUN git clone https://github.com/riscv/sail-riscv.git
-WORKDIR /opt/sail-riscv
-ENV ARCH=RV32
-RUN eval $(opam config env) && make
-RUN ln -s /opt/sail-riscv/c_emulator/riscv_sim_RV32 /usr/bin/riscv_sim_RV32
-RUN echo "export PATH=\"$PATH:/sail-riscv/c_emulator/\""  >> /root/.bashrc
+RUN mkdir riscv-sail
+WORKDIR /opt/riscv-sail/
+RUN wget https://github.com/riscv/sail-riscv/releases/download/0.10/sail-riscv-Linux-x86_64.tar.gz
+RUN tar -xvf sail-riscv-Linux-x86_64.tar.gz
+RUN ln -s /opt/riscv-sail/sail-riscv-Linux-x86_64/bin/sail_riscv_sim /usr/bin/riscv_sim_RV32
+RUN echo "export PATH=\"$PATH:/opt/riscv-sail/sail-riscv-Linux-x86_64/bin/\""  >> /root/.bashrc
 
 ## Spike (riscv-isa-sim)
 #WORKDIR /

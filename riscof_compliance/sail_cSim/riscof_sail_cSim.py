@@ -41,8 +41,8 @@ class sail_cSim(pluginTemplate):
     def initialise(self, suite, work_dir, archtest_env):
         self.suite = suite
         self.work_dir = work_dir
-        self.objdump_cmd = 'riscv-none-embed-objdump -D {0} > {2};'
-        self.compile_cmd = 'riscv-none-embed-gcc -march={0} \
+        self.objdump_cmd = 'riscv-none-elf-objdump -D {0} > {2};'
+        self.compile_cmd = 'riscv-none-elf-gcc -march={0} \
          -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles\
          -T '+self.pluginpath+'/env/link.ld\
          -I '+self.pluginpath+'/env/\
@@ -63,11 +63,11 @@ class sail_cSim(pluginTemplate):
             self.isa += 'f'
         if "D" in ispec["ISA"]:
             self.isa += 'd'
-        objdump = "riscv-none-embed-objdump".format(self.xlen)
+        objdump = "riscv-none-elf-objdump".format(self.xlen)
         if shutil.which(objdump) is None:
             logger.error(objdump+": executable not found. Please check environment setup.")
             raise SystemExit(1)
-        compiler = "riscv-none-embed-gcc".format(self.xlen)
+        compiler = "riscv-none-elf-gcc".format(self.xlen)
         if shutil.which(compiler) is None:
             logger.error(compiler+": executable not found. Please check environment setup.")
             raise SystemExit(1)

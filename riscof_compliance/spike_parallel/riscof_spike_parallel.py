@@ -50,7 +50,7 @@ class spike_parallel(pluginTemplate):
 
         #TODO: The following assumes you are using the riscv-gcc toolchain. If
         #      not please change appropriately
-        self.compile_cmd = 'riscv-none-embed-gcc -march={0} \
+        self.compile_cmd = 'riscv-none-elf-gcc -march={0} \
          -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles\
          -T '+self.pluginpath+'/env/link.ld\
          -I '+self.pluginpath+'/env/\
@@ -85,7 +85,7 @@ class spike_parallel(pluginTemplate):
         if "C" in ispec["ISA"]:
             self.isa += 'c'
 
-        compiler = "riscv-none-embed-gcc".format(self.xlen)
+        compiler = "riscv-none-elf-gcc".format(self.xlen)
         if shutil.which(compiler) is None:
             logger.error(compiler+": executable not found. Please check environment setup.")
             raise SystemExit

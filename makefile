@@ -56,17 +56,18 @@ _INCS_VLOG		?=	rtl/inc
 INCS_VLOG			:=	$(addprefix -I,$(_INCS_VLOG))
 
 # Parameters of simulation
-#IRAM_KB_SIZE	?=	2*1024 #2MB due to J-Tests on RV Compliance tests
-IRAM_KB_SIZE	?=	128
-DRAM_KB_SIZE	?=	32
+IRAM_KB_SIZE	?=	2*1024 #2MB due to J-Tests on RV Compliance tests
+#IRAM_KB_SIZE	?=	128
+#DRAM_KB_SIZE	?=	32
+DRAM_KB_SIZE	?=	128
 ENTRY_ADDR		?=	\'h8000_0000
 IRAM_ADDR			?=	0x80000000
 DRAM_ADDR			?=	0x10000000
 # For NoX SoC
 IRAM_ADDR_SOC	?=	0xa0000000
 DRAM_ADDR_SOC	?=	0x10000000
-DISPLAY_TEST	?=	0 # Enable $display in axi_mem.sv [compliance test]
-WAVEFORM_USE	?=	1 # Use 0 to not generate waves [compliance test]
+DISPLAY_TEST	?=	1 # Enable $display in axi_mem.sv [compliance test]
+WAVEFORM_USE	?=	0 # Use 0 to not generate waves [compliance test]
 
 # Verilator info
 VERILATOR_TB	:=	tb
@@ -116,15 +117,15 @@ RUN_CMD_2			:=	docker run --rm --name ship_nox	\
 									/opt/riscv-arch-test-nox aignacio/nox
 RUN_CMD_COMP	:=	docker run --rm --name ship_nox	\
 									-v $(abspath .):/test -w				\
-									/test/riscof_compliance aignacio/riscof
+									/test/riscof_compliance phckopper/riscof
 
 RUN_SW				:=	sw/hello_world/output/hello_world.elf
 #RUN_SW_SOC		:=	sw/bootloader/output/bootloader.elf
 RUN_SW_SOC		:=	sw/soc_hello_world/output/soc_hello_world.elf
 #RUN_SW_SOC		:=	sw/FreeRTOS_demo/output/FreeRTOS_demo.elf
 
-CPPFLAGS_VERI	:=	"$(INCS_CPP) -O0 -g3 -Wall						\
-									-Werror																\
+CPPFLAGS_VERI	:=	"$(INCS_CPP) -O3 -Wall						\
+																								\
 									-DIRAM_KB_SIZE=\"$(IRAM_KB_SIZE)\"		\
 									-DDRAM_KB_SIZE=\"$(DRAM_KB_SIZE)\"		\
 									-DIRAM_ADDR=\"$(IRAM_ADDR)\"					\
@@ -133,7 +134,7 @@ CPPFLAGS_VERI	:=	"$(INCS_CPP) -O0 -g3 -Wall						\
 									-DWAVEFORM_FST=\"$(WAVEFORM_FST)\""
 									#-Wunknown-warning-option"
 
-CPPFLAGS_SOC	:=	"$(INCS_CPP) -O0 -g3 -Wall						\
+CPPFLAGS_SOC	:=	"$(INCS_CPP) -O3 -Wall						\
 									-DIRAM_KB_SIZE=\"$(IRAM_KB_SIZE)\"		\
 									-DDRAM_KB_SIZE=\"$(DRAM_KB_SIZE)\"		\
 									-DIRAM_ADDR=\"$(IRAM_ADDR_SOC)\"			\
@@ -262,3 +263,7 @@ run_comp:
 	$(RUN_CMD_COMP) riscof validateyaml --config=config.ini
 	$(RUN_CMD_COMP) riscof testlist --config=config.ini --suite=riscv-arch-test/riscv-test-suite/ --env=riscv-arch-test/riscv-test-suite/env
 	$(RUN_CMD_COMP) riscof run --config=config.ini --suite=riscv-arch-test/riscv-test-suite/ --env=riscv-arch-test/riscv-test-suite/env
+
+drop_comp:
+	$(RUN_CMD_COMP) apt-get update
+	$(RUN_CMD_COMP) apt-get install -y libstdc++6 --only-upgrade
