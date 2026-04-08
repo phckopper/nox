@@ -143,8 +143,12 @@ module execute
     // from AXI rdata, eliminating the in2out timing violation.
     // LSU_AMO result is available when lsu_bp drops (state machine completes), same
     // timing as LSU_LOAD, so treat it identically for the load-use hazard check.
+    // NOTE: ~lsu_bp_i is intentionally NOT included here. Including it created a
+    // combinatorial loop: lsu_bp_o→lsu_bp_i→load_use_hazard→lsu_o.op_typ→
+    // lsu_i.op_typ→ap_txn→bp_addr→lsu_bp_o. The guard is instead placed on the
+    // block that clears next_ex_mem_wb.lsu (below) to prevent premature clearing
+    // of the LSU_LOAD marker while the AXI transaction is still in progress.
     load_use_hazard = (ex_mem_wb_ff.lsu == LSU_LOAD || ex_mem_wb_ff.lsu == LSU_AMO) &&
-                      ~lsu_bp_i &&
                       (rs1_fwd == FWD_REG || rs2_fwd == FWD_REG);
   end : fwd_mux
 
@@ -322,9 +326,13 @@ module execute
       id_ready_o = 'b0;
     end
 
-    if (load_use_hazard) begin
+    if (load_use_hazard && ~lsu_bp_i) begin
       // Stall: squash this instruction's WB write and clear the load flag
       // so the hazard does not re-trigger next cycle.
+      // Guard with ~lsu_bp_i: while the AXI transaction is in progress
+      // (lsu_bp_i=1), execute is already stalled; clearing ex_mem_wb_ff.lsu
+      // here would destroy the LSU_LOAD marker needed to re-detect the hazard
+      // when the data finally returns (lsu_bp_i drops to 0).
       next_ex_mem_wb.we_rd = 'b0;
       next_ex_mem_wb.lsu   = NO_LSU;
       id_ready_o           = 'b0;
